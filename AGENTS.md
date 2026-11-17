@@ -79,8 +79,8 @@ CI гоняется на macOS (`macos-15`): clippy, тесты, universal `.app
 Релиз: `tools/release.sh`. Требует чистого дерева и `HEAD` в `fork/main`, версию берёт из
 `Cargo.toml`, собирает universal `.app` и `.dmg`, ставит тег `v<версия>` и публикует релиз
 через `gh`. Релизы собираются локально, CI их не публикует: macOS-раннеры у GitHub бывают
-недоступны часами. Для universal-сборки нужен std под x86_64 и rustup-тулчейн в `PATH` —
-`rustc` из Homebrew цели rustup не видит.
+недоступны часами. Если `rustc` из `PATH` не видит цель x86_64 (Homebrew-сборка Rust),
+скрипт сам берёт подходящий rustup-тулчейн.
 
 Если `skia-bindings` не может скачать бинарники Skia:
 
