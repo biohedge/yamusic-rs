@@ -11,7 +11,9 @@ if [ "${1:-}" = "--debug" ]; then
 fi
 
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-APP="target/$PROFILE/yamusic-rs.app"
+# Имя берём из того же места, что и make_app.sh, — из build.rs.
+NAME=$(sed -n 's/^const APP_NAME: &str = "\(.*\)";/\1/p' build.rs)
+APP="target/$PROFILE/$NAME.app"
 DMG="target/$PROFILE/yamusic-rs-$VERSION.dmg"
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
@@ -25,6 +27,6 @@ cp -R "$APP" "$STAGE/"
 # Симлинк, чтобы приложение перетаскивалось в «Программы» прямо из окна тома.
 ln -s /Applications "$STAGE/Applications"
 rm -f "$DMG"
-hdiutil create -volname "Яндекс Музыка RS" -srcfolder "$STAGE" \
+hdiutil create -volname "$NAME" -srcfolder "$STAGE" \
   -fs HFS+ -format UDZO -ov -quiet "$DMG"
 echo "Готово: $DMG"

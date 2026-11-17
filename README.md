@@ -2,7 +2,7 @@
 
 <img src="docs/logo.png" width="96" height="96" alt="">
 
-# Яндекс Музыка RS
+# Я.Музыка [RS]
 
 **Интерфейс официального приложения Яндекс Музыки на Rust: один файл и в 13 раз меньше памяти.**
 
@@ -127,21 +127,21 @@
 
 1. Скачайте `yamusic-rs-<версия>.dmg` со страницы
    [последнего релиза](https://github.com/rnikitin/yamusic-rs/releases/latest).
-2. Откройте dmg и перетащите `yamusic-rs.app` в «Программы»: ярлык «Программы» лежит рядом
+2. Откройте dmg и перетащите `Я.Музыка [RS].app` в «Программы»: ярлык «Программы» лежит рядом
    в окне тома.
 3. Приложение покажет код. Откройте [ya.ru/device](https://ya.ru/device) на компьютере или телефоне
    и введите его.
 
 Приложение без подписи Apple, поэтому при первом запуске macOS может его заблокировать: нажмите
 на `.app` правой кнопкой → «Открыть» → «Открыть». Из Терминала то же самое делается командой
-`xattr -d com.apple.quarantine "/Applications/yamusic-rs.app"`. Сборка universal — работает и на
+`xattr -d com.apple.quarantine "/Applications/Я.Музыка [RS].app"`. Сборка universal — работает и на
 Apple Silicon (M1 и новее), и на Intel-маках. Трея нет. Автозапуск при входе включается в настройках
 (LaunchAgent, обычное окно).
 
 **Обновление.** Приложение сообщает о новой версии, кнопка «Обновить» открывает страницу релиза:
 новый dmg ставится поверх старого перетаскиванием.
 
-**Удаление.** Удалите `yamusic-rs.app` из «Программ» и папку
+**Удаление.** Удалите `Я.Музыка [RS].app` из «Программ» и папку
 `~/Library/Application Support/yamusic-rs`.
 
 ### Linux, бета (оригинальный проект)
@@ -357,8 +357,8 @@ sudo pacman -S --needed base-devel alsa-lib fontconfig freetype2 wayland libxkbc
 Нужны Xcode Command Line Tools. Собрать `.app`, запустить и собрать `.dmg`:
 
 ```bash
-tools/make_app.sh     # соберёт target/release/yamusic-rs.app (--debug — отладочный)
-open target/release/yamusic-rs.app
+tools/make_app.sh     # соберёт target/release/Я.Музыка [RS].app (--debug — отладочный)
+open "target/release/Я.Музыка [RS].app"
 tools/make_dmg.sh     # target/release/yamusic-rs-<версия>.dmg с ярлыком «Программы»
 ```
 
@@ -461,7 +461,7 @@ This fork ships macOS builds only.
 
 - **macOS:** download `yamusic-rs-<version>.dmg` from the
   [latest release](https://github.com/rnikitin/yamusic-rs/releases/latest), open it and drag
-  `yamusic-rs.app` into Applications. The bundle is universal (Apple Silicon and Intel). It is
+  `Я.Музыка [RS].app` into Applications. The bundle is universal (Apple Silicon and Intel). It is
   unsigned, so the first launch needs right click → Open. There is no tray icon; launch at login
   can be turned on in settings (LaunchAgent). Sign in with the code shown at [ya.ru/device](https://ya.ru/device).
 - **Windows and Linux:** published by the [original project](https://github.com/SpolzerMod/yamusic-rs):

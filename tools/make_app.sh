@@ -11,12 +11,13 @@ if [ "${1:-}" = "--debug" ]; then
 fi
 
 # Сборка бинарника. Три режима:
-#  - MACOS_UNIVERSAL=1 — обе арки (arm64 + x86_64) и lipo в universal (CI: Intel-раннер);
+#  - MACOS_UNIVERSAL=1 — обе арки (arm64 + x86_64) и lipo в universal (CI: раннер macOS);
 #  - MACOS_TARGET=<triple> — одна кросс-арка;
 #  - иначе — нативно под хост (локальная сборка на Apple Silicon).
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-NAME="Яндекс Музыка RS"
-APP="target/$PROFILE/yamusic-rs.app"
+# Имя задаётся один раз в build.rs (APP_NAME): здесь только читаем, чтобы не дублировать.
+NAME=$(sed -n 's/^const APP_NAME: &str = "\(.*\)";/\1/p' build.rs)
+APP="target/$PROFILE/$NAME.app"
 
 if [ "${MACOS_UNIVERSAL:-}" = "1" ]; then
   # Кросс-сборка x86_64 нужна только здесь: без std под цель rustc падает на

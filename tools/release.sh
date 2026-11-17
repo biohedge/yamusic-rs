@@ -8,6 +8,8 @@ cd "$(dirname "$0")/.."
 
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 TAG="v$VERSION"
+# Имя приложения — из build.rs, как в make_app.sh.
+NAME=$(sed -n 's/^const APP_NAME: &str = "\(.*\)";/\1/p' build.rs)
 REMOTE=fork
 REPO=$(git remote get-url "$REMOTE" | sed -E 's#.*github\.com[:/](.+)$#\1#' | sed 's#\.git$##')
 
@@ -44,7 +46,7 @@ git fetch -q "$REMOTE" main
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
   [ "$(git rev-parse "$TAG^{commit}")" = "$(git rev-parse HEAD)" ] || die "Тег $TAG указывает не на HEAD"
 else
-  git tag -a "$TAG" -m "Яндекс Музыка RS $VERSION"
+  git tag -a "$TAG" -m "$NAME $VERSION"
 fi
 
 MACOS_UNIVERSAL=1 tools/make_app.sh
@@ -63,4 +65,4 @@ SHA-256: $SHA"
 
 git push -q "$REMOTE" "$TAG"
 gh release create "$TAG" "$DMG" --repo "$REPO" \
-  --title "Яндекс Музыка RS $VERSION" --notes "$BODY"
+  --title "$NAME $VERSION" --notes "$BODY"
