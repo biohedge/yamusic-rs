@@ -184,3 +184,11 @@
 - Релиз форка `1.1.2`: проверка обновлений, «Обновить», «О программе» и Discord-статус
   берут адрес из `repository` в `Cargo.toml` — теперь `rnikitin/yamusic-rs`. В `README.md`
   ссылки на релизы, issues и security тоже переведены на форк.
+
+## macOS-only сборка: dmg (17.11.2026)
+
+- Форк публикует только macOS. В CI осталась одна джоба `macos`: clippy, тесты, universal
+  `.app` и `.dmg`; Windows и Linux удалены, `release` зависит только от неё.
+- `tools/make_dmg.sh` упаковывает готовый `.app` через `hdiutil` (HFS+, UDZO): на томе
+  приложение и симлинк `/Applications`, оформления нет.
+- Релиз `1.1.3` — один файл `yamusic-rs-1.1.3.dmg`.

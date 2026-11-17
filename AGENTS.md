@@ -53,13 +53,14 @@
 
 ## Сборка и проверка
 
-Требования: Rust 1.92+, на Windows — MSVC Build Tools и Windows SDK (`rc.exe`),
-на macOS — Xcode Command Line Tools.
+Требования: Rust 1.92+ и Xcode Command Line Tools. Форк собирает только macOS; код
+Windows и Linux остался от апстрима и здесь не собирается и не проверяется.
 
 ```bash
 cargo build --release          # первый раз 5–10 минут: Skia + LTO
 cargo run                      # debug: лог дублируется в консоль
 tools/make_app.sh              # macOS .app-бандл (--debug для debug-сборки)
+tools/make_dmg.sh              # .dmg из готового .app: ярлык «Программы» рядом
 ```
 
 Проверки, которые обязаны проходить (то же делает CI в `.github/workflows/build.yml`):
@@ -70,8 +71,10 @@ cargo test --release
 cargo build --release
 ```
 
-CI гоняется на `windows-latest` и является авторитетным для Windows. Локально на macOS
-эти команды тоже проходят, но Windows-only код без `cfg`-гейтов сломает только CI.
+CI гоняется на macOS (`macos-15-intel`): clippy, тесты, universal `.app` и `.dmg`. Это
+авторитетная проверка для macOS. Windows и Linux в этом форке не собираются — их сборки
+живут в апстриме, поэтому Windows- и Linux-only код локально ничем не проверяется: держать
+его под `cfg`-гейтами и не ломать чужие ветки — ответственность автора правки.
 
 Если `skia-bindings` не может скачать бинарники Skia:
 
