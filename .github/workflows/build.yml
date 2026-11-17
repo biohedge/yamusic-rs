@@ -12,7 +12,8 @@ on:
 
 jobs:
   macos:
-    runs-on: macos-15-intel
+    # arm64-раннер: universal .app собирается кросс-компиляцией x86_64.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
 
