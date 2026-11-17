@@ -71,10 +71,16 @@ cargo test --release
 cargo build --release
 ```
 
-CI гоняется на macOS (`macos-15-intel`): clippy, тесты, universal `.app` и `.dmg`. Это
+CI гоняется на macOS (`macos-15`): clippy, тесты, universal `.app` и `.dmg`. Это
 авторитетная проверка для macOS. Windows и Linux в этом форке не собираются — их сборки
 живут в апстриме, поэтому Windows- и Linux-only код локально ничем не проверяется: держать
 его под `cfg`-гейтами и не ломать чужие ветки — ответственность автора правки.
+
+Релиз: `tools/release.sh`. Требует чистого дерева и `HEAD` в `fork/main`, версию берёт из
+`Cargo.toml`, собирает universal `.app` и `.dmg`, ставит тег `v<версия>` и публикует релиз
+через `gh`. Релизы собираются локально, CI их не публикует: macOS-раннеры у GitHub бывают
+недоступны часами. Для universal-сборки нужен std под x86_64 и rustup-тулчейн в `PATH` —
+`rustc` из Homebrew цели rustup не видит.
 
 Если `skia-bindings` не может скачать бинарники Skia:
 

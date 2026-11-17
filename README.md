@@ -363,7 +363,9 @@ tools/make_dmg.sh     # target/release/yamusic-rs-<версия>.dmg с ярлы
 ```
 
 Для быстрой проверки без бандла подойдёт `cargo run`. Релизная сборка universal
-(Apple Silicon и Intel): `MACOS_UNIVERSAL=1 tools/make_app.sh`.
+(Apple Silicon и Intel): `MACOS_UNIVERSAL=1 tools/make_app.sh`. Для кросс-сборки нужен std
+под x86_64 (`rustup target add x86_64-apple-darwin`); `rustc` из Homebrew целей rustup
+не видит, поэтому берите тулчейн rustup.
 
 #### Если Skia не скачивается
 
@@ -420,19 +422,22 @@ SKIA_BINARIES_URL=file:///путь/к/skia.tar.gz cargo build --release
 
 ### Релиз
 
-Файлы для релизов собирает GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml))
-из исходников тега. Лог сборки открыт, поэтому видно, из какого кода получился файл.
+Релиз собирается локально и загружается одной командой:
 
 ```bash
-git tag v1.1.3          # версия должна совпадать с Cargo.toml
-git push origin v1.1.3
+tools/release.sh
 ```
 
-Сборка прогоняет clippy и тесты, собирает universal `.app` (Apple Silicon и Intel) и упаковывает
-его в `yamusic-rs-<версия>.dmg`, а когда dmg готов, создаёт релиз с этим файлом. На каждый push
-и pull request всё это тоже собирается, файлы можно скачать из артефактов сборки. Windows и Linux
-в этом форке не собираются: их сборки публикует оригинальный проект. Встроенная обновлялка ищет
-последний релиз на GitHub, а на macOS кнопка «Обновить» открывает страницу релиза.
+Скрипт проверяет, что дерево чистое и `HEAD` уже в `fork/main`, собирает universal `.app`
+(Apple Silicon и Intel), упаковывает его в `yamusic-rs-<версия>.dmg`, сверяет образ
+(`hdiutil verify`), создаёт тег `v<версия>` и публикует релиз с dmg и списком изменений.
+Версия берётся из `Cargo.toml`.
+
+GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)) на каждый push,
+pull request и тег прогоняет clippy, тесты и сборку `.app` + `.dmg`, но релизы не публикует:
+macOS-раннеры у GitHub периодически недоступны часами. Windows и Linux в этом форке
+не собираются: их сборки публикует оригинальный проект. Встроенная обновлялка ищет последний
+релиз на GitHub, а на macOS кнопка «Обновить» открывает страницу релиза.
 
 ## Лицензия
 

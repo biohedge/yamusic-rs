@@ -19,6 +19,14 @@ NAME="Яндекс Музыка RS"
 APP="target/$PROFILE/yamusic-rs.app"
 
 if [ "${MACOS_UNIVERSAL:-}" = "1" ]; then
+  # Кросс-сборка x86_64 нужна только здесь: без std под цель rustc падает на
+  # «can't find crate for core», поэтому проверяем заранее и подсказываем лечение.
+  LIBDIR=$(rustc --print target-libdir --target x86_64-apple-darwin 2>/dev/null || true)
+  if [ -z "$LIBDIR" ] || [ ! -d "$LIBDIR" ]; then
+    echo "Нет std под x86_64-apple-darwin: rustup target add x86_64-apple-darwin" >&2
+    echo "Если rustc из Homebrew, он цели не видит: поставьте rustup-тулчейн первым в PATH." >&2
+    exit 1
+  fi
   cargo build "--$PROFILE" --target aarch64-apple-darwin
   cargo build "--$PROFILE" --target x86_64-apple-darwin
   BIN="target/$PROFILE/yamusic-rs-universal"
