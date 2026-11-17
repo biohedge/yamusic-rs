@@ -75,7 +75,12 @@ pub fn check() -> Result<Option<Release>, String> {
     });
     Ok(Some(Release {
         version: tag.trim_start_matches('v').to_string(),
-        page: v.get("html_url").and_then(|u| u.as_str()).unwrap_or(env!("CARGO_PKG_REPOSITORY")).to_string(),
+        // Страницу откроет браузер системы: адрес из ответа берём, только если это https.
+        page: v
+            .get("html_url")
+            .and_then(|u| u.as_str())
+            .and_then(crate::client::browser_url)
+            .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string()),
         exe,
     }))
 }

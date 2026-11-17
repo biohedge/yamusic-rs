@@ -1486,6 +1486,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     app.set_linux(cfg!(target_os = "linux"));
     app.set_translations(crate::i18n::available());
     app.set_download_dir(music_dir(&cfg).display().to_string().into());
+    app.set_hidden_blocks(landing_ui::hidden_titles(&cfg).into());
     let ctx = Rc::new(Ctx {
         ui: ui.as_weak(),
         lite: Cell::new(lite),
@@ -2689,6 +2690,15 @@ impl Ctx {
                 let mut st = self.st.borrow_mut();
                 st.cfg.download_dir = dir;
                 st.cfg.save();
+            }
+            "hidden-blocks" => {
+                {
+                    let mut st = self.st.borrow_mut();
+                    st.cfg.hidden_blocks.clear();
+                    st.cfg.save();
+                }
+                app.set_hidden_blocks(SharedString::new());
+                self.toast("Скрытые блоки снова на главной");
             }
             "about" => sys::open_url(env!("CARGO_PKG_REPOSITORY")),
             "discord" => {
