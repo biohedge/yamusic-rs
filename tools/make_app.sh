@@ -67,6 +67,9 @@ cp "$TMP/512.png"  "$ICONSET/icon_256x256@2x.png"
 cp "$TMP/512.png"  "$ICONSET/icon_512x512.png"
 cp "$TMP/1024.png" "$ICONSET/icon_512x512@2x.png"
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+# Набор PNG — временный: удаляем до подписи, иначе codesign запечатает эти файлы,
+# trap уберёт их после подписи, и печать бандла станет недействительной.
+rm -rf "$ICONSET"
 
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

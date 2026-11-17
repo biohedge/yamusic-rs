@@ -23,6 +23,12 @@ if [ ! -d "$APP" ]; then
   exit 1
 fi
 
+# Печать бандла проверяем до упаковки: иначе Gatekeeper скажет «damaged» уже у пользователя.
+if ! codesign --verify --strict "$APP" 2>/dev/null; then
+  echo "Подпись $APP недействительна — пересоберите его: tools/make_app.sh" >&2
+  exit 1
+fi
+
 cp -R "$APP" "$STAGE/"
 # Симлинк, чтобы приложение перетаскивалось в «Программы» прямо из окна тома.
 ln -s /Applications "$STAGE/Applications"
