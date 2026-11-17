@@ -6,12 +6,12 @@
 
 **Интерфейс официального приложения Яндекс Музыки на Rust: один файл и в 13 раз меньше памяти.**
 
-[![Релиз](https://img.shields.io/github/v/release/SpolzerMod/yamusic-rs?label=%D1%80%D0%B5%D0%BB%D0%B8%D0%B7&color=ffd60a&labelColor=1c1c1f)](https://github.com/SpolzerMod/yamusic-rs/releases/latest)
+[![Релиз](https://img.shields.io/github/v/release/rnikitin/yamusic-rs?label=%D1%80%D0%B5%D0%BB%D0%B8%D0%B7&color=ffd60a&labelColor=1c1c1f)](https://github.com/rnikitin/yamusic-rs/releases/latest)
 ![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-2b2b30?labelColor=1c1c1f)
 ![Linux бета](https://img.shields.io/badge/Linux-%D0%B1%D0%B5%D1%82%D0%B0-2b2b30?labelColor=1c1c1f)
 [![GPL-3.0](https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-GPL--3.0-2b2b30?labelColor=1c1c1f)](LICENSE)
 
-[Скачать](https://github.com/SpolzerMod/yamusic-rs/releases/latest) ·
+[Скачать](https://github.com/rnikitin/yamusic-rs/releases/latest) ·
 [Возможности](#возможности) ·
 [Замеры](#замеры) ·
 [Какие системы](#какие-системы-поддерживаются) ·
@@ -92,7 +92,7 @@
 
 ### Windows
 
-1. Скачайте `yamusic-rs.exe` со страницы [последнего релиза](https://github.com/SpolzerMod/yamusic-rs/releases/latest).
+1. Скачайте `yamusic-rs.exe` со страницы [последнего релиза](https://github.com/rnikitin/yamusic-rs/releases/latest).
 2. Положите файл в любую папку, например в `Документы` или `C:\Programs`, и запустите.
    Установщика нет, приложение целиком помещается в один exe.
 3. Приложение покажет код. Откройте [ya.ru/device](https://ya.ru/device) на компьютере или телефоне
@@ -153,11 +153,11 @@ AppImage монтирует себя через FUSE. Если пишет `Canno
 | Система | Состояние |
 | --- | --- |
 | **Windows 11** x64 | Основная платформа, проверяется каждая версия. |
-| **Windows 10** x64 | Должна работать: приложение использует те же API. Углы окна будут прямыми, потому что скругление есть только в Windows 11. Регулярно не проверяется, о проблемах пишите в [issues](https://github.com/SpolzerMod/yamusic-rs/issues). |
+| **Windows 10** x64 | Должна работать: приложение использует те же API. Углы окна будут прямыми, потому что скругление есть только в Windows 11. Регулярно не проверяется, о проблемах пишите в [issues](https://github.com/rnikitin/yamusic-rs/issues). |
 | Windows на ARM | Должна запускаться через эмуляцию x64. Не проверялась. |
 | Windows 7 и 8.1 | Не поддерживаются: текущий Rust под них не собирает. |
-| **Linux** x86_64 | Бета. Нужна glibc 2.35 или новее: Ubuntu 22.04+, Debian 12+, Mint 21+, Fedora, openSUSE, Arch и другие. Проверено на Ubuntu 22.04, Debian 13, Fedora 45 и Arch, в Wayland и X11. Звук через PipeWire, PulseAudio или ALSA. Медиаклавиши и плеер в панели GNOME и KDE работают через MPRIS. Трея пока нет, поэтому закрытие окна закрывает приложение. О проблемах пишите в [issues](https://github.com/SpolzerMod/yamusic-rs/issues). |
-| **macOS** 12+ (Apple Silicon и Intel) | Готовая universal-сборка `yamusic-rs-macos-universal.zip` в [релизах](https://github.com/SpolzerMod/yamusic-rs/releases). Нативный «светофор» и скруглённые углы, медиа-клавиши и «Сейчас играет» в Пункте управления. Трея нет. Автозапуск при входе — в настройках, через LaunchAgent, без трея. |
+| **Linux** x86_64 | Бета. Нужна glibc 2.35 или новее: Ubuntu 22.04+, Debian 12+, Mint 21+, Fedora, openSUSE, Arch и другие. Проверено на Ubuntu 22.04, Debian 13, Fedora 45 и Arch, в Wayland и X11. Звук через PipeWire, PulseAudio или ALSA. Медиаклавиши и плеер в панели GNOME и KDE работают через MPRIS. Трея пока нет, поэтому закрытие окна закрывает приложение. О проблемах пишите в [issues](https://github.com/rnikitin/yamusic-rs/issues). |
+| **macOS** 12+ (Apple Silicon и Intel) | Готовая universal-сборка `yamusic-rs-macos-universal.zip` в [релизах](https://github.com/rnikitin/yamusic-rs/releases). Нативный «светофор» и скруглённые углы, медиа-клавиши и «Сейчас играет» в Пункте управления. Трея нет. Автозапуск при входе — в настройках, через LaunchAgent, без трея. |
 
 **Нужно ещё:**
 - аккаунт Яндекса. Без Плюса сервер отдаёт только 30-секундные отрывки;
@@ -245,7 +245,7 @@ API Яндекса неофициальный и может меняться б�
 
 ### Сообщить об ошибке
 
-Откройте [issue](https://github.com/SpolzerMod/yamusic-rs/issues/new/choose) и напишите:
+Откройте [issue](https://github.com/rnikitin/yamusic-rs/issues/new/choose) и напишите:
 
 - версию RS из «Настройки → О приложении» и версию системы (на Linux ещё дистрибутив и окружение: GNOME, KDE…);
 - что вы делали, что ожидали увидеть и что получилось;
@@ -267,12 +267,12 @@ API Яндекса неофициальный и может меняться б�
 - обновлялка ставит файл, который не совпадает с релизом;
 - другая программа или другой пользователь компьютера может прочитать токен.
 
-Напишите через [Security → Report a vulnerability](https://github.com/SpolzerMod/yamusic-rs/security/advisories/new).
+Напишите через [Security → Report a vulnerability](https://github.com/rnikitin/yamusic-rs/security/advisories/new).
 Сообщение увидят только владельцы репозитория. Подробнее в [SECURITY.md](SECURITY.md).
 
 Если после обновления приложение перестало запускаться, это тоже срочно, но писать можно
 в обычный issue, в заголовке укажите версию. Пока ждёте исправления, предыдущую версию можно
-скачать со страницы [релизов](https://github.com/SpolzerMod/yamusic-rs/releases).
+скачать со страницы [релизов](https://github.com/rnikitin/yamusic-rs/releases).
 
 ### Прислать код
 
@@ -291,7 +291,7 @@ API Яндекса неофициальный и может меняться б�
 Нужен Rust 1.92 или новее (`rustup update stable`). Дальше на любой системе одинаково:
 
 ```bash
-git clone https://github.com/SpolzerMod/yamusic-rs
+git clone https://github.com/rnikitin/yamusic-rs
 cd yamusic-rs
 cargo build --release
 ```
@@ -431,7 +431,7 @@ of Electron it is a single 26 MB executable that renders its window on the CPU w
 Running the same scenario, the official app uses about 850 MB of RAM across 7 processes, and RS
 uses about 65 MB in one process.
 
-- **Windows:** download `yamusic-rs.exe` from the [latest release](https://github.com/SpolzerMod/yamusic-rs/releases/latest)
+- **Windows:** download `yamusic-rs.exe` from the [latest release](https://github.com/rnikitin/yamusic-rs/releases/latest)
   and run it; there is no installer. Sign in with the code shown at [ya.ru/device](https://ya.ru/device).
   The app updates itself from GitHub releases.
 - **Linux (beta):** the release has a `.deb` (Debian, Ubuntu, Mint), an `.rpm` (Fedora, openSUSE)
@@ -439,7 +439,7 @@ uses about 65 MB in one process.
   Needs glibc 2.35 or newer. Sound goes through PipeWire, PulseAudio or ALSA, media keys and
   the GNOME/KDE player widget work via MPRIS. There is no tray icon yet.
 - **macOS:** download `yamusic-rs-macos-universal.zip` from the
-  [latest release](https://github.com/SpolzerMod/yamusic-rs/releases/latest). The binary runs on
+  [latest release](https://github.com/rnikitin/yamusic-rs/releases/latest). The binary runs on
   Apple Silicon and Intel. There is no tray. Sign-in at login can be turned on in settings
   (LaunchAgent).
 - **Requirements:** Windows 11 (Windows 10 should work but is not tested regularly), Linux, or
@@ -450,10 +450,10 @@ uses about 65 MB in one process.
   and the local Discord client (optional status). There is no telemetry.
 - **Build:** Rust 1.92+, then `cargo build --release`. On Windows you need MSVC Build Tools with the
   Windows SDK, on Linux a C toolchain and the `-dev` packages listed in the Russian section above.
-- **Bugs:** open an [issue](https://github.com/SpolzerMod/yamusic-rs/issues/new/choose) with the app
+- **Bugs:** open an [issue](https://github.com/rnikitin/yamusic-rs/issues/new/choose) with the app
   version, your OS version (on Linux also the distro and desktop) and the last lines of
   `%APPDATA%\yamusic-rs\log.txt` (`~/.config/yamusic-rs/log.txt` on Linux). Security
-  problems go to [Report a vulnerability](https://github.com/SpolzerMod/yamusic-rs/security/advisories/new),
+  problems go to [Report a vulnerability](https://github.com/rnikitin/yamusic-rs/security/advisories/new),
   not to public issues.
 
 The code is released under the [GNU GPL v3](LICENSE): forks you distribute must stay open source

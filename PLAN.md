@@ -181,3 +181,6 @@
 - Ветки `macos` и `macos-1.1` влиты в `main`; рабочая ветка одна — `main`.
 - Проверки: `cargo clippy --release --all-targets -- -D warnings`, `cargo test --release`
   (27 passed), `cargo build --release` — зелёные на macOS.
+- Релиз форка `1.1.2`: проверка обновлений, «Обновить», «О программе» и Discord-статус
+  берут адрес из `repository` в `Cargo.toml` — теперь `rnikitin/yamusic-rs`. В `README.md`
+  ссылки на релизы, issues и security тоже переведены на форк.
