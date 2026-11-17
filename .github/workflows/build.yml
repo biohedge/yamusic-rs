@@ -1,7 +1,6 @@
-# Каждый push и PR: clippy, тесты и сборки в артефактах: exe для Windows,
-# universal .app для macOS, .deb, .rpm и AppImage для Linux.
-# Тег v* (например v1.1.1): то же и релиз со всеми файлами. Его создаёт отдельное задание
-# после всех сборок. Встроенная обновлялка на Windows ищет в релизе yamusic-rs.exe.
+# Каждый push и PR: clippy, тесты и universal .app + .dmg для macOS.
+# Тег v* (например v1.1.3): то же и релиз с одним файлом .dmg. Его создаёт отдельное
+# задание после сборки. Встроенная обновлялка на macOS открывает страницу релиза.
 name: Сборка
 
 on:
@@ -12,14 +11,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  macos:
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v7
 
       - name: Тег совпадает с версией в Cargo.toml
         if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
         run: |
           v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           if [ "v$v" != "$GITHUB_REF_NAME" ]; then
@@ -29,98 +27,28 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
+          targets: aarch64-apple-darwin
           components: clippy
       - uses: Swatinem/rust-cache@v2
 
       - run: cargo clippy --release --all-targets -- -D warnings
       - run: cargo test --release
-      - run: cargo build --release
 
-      - name: SHA-256
-        shell: pwsh
-        run: (Get-FileHash target/release/yamusic-rs.exe -Algorithm SHA256).Hash.ToLower()
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: windows-exe
-          path: target/release/yamusic-rs.exe
-          archive: false
-
-  macos:
-    runs-on: macos-15-intel
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Собрать universal .app (arm64 + x86_64) и упаковать в zip
+      - name: Собрать universal .app (arm64 + x86_64) и .dmg
         env:
           MACOS_UNIVERSAL: "1"
         run: |
           tools/make_app.sh
-          ditto -c -k --keepParent target/release/yamusic-rs.app yamusic-rs-macos-universal.zip
+          tools/make_dmg.sh
 
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-app
-          path: yamusic-rs-macos-universal.zip
-
-  # Ubuntu 22.04 — самая старая glibc (2.35) среди поддерживаемых: собранное здесь
-  # запускается и на ней, и на всех более новых дистрибутивах.
-  linux:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Зависимости сборки
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libasound2-dev libfontconfig1-dev libfreetype-dev \
-            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libx11-xcb-dev \
-            libxcursor-dev libxi-dev libxrandr-dev
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-
-      - run: cargo clippy --release --all-targets -- -D warnings
-      - run: cargo test --release
-      - run: cargo build --release
-
-      - name: Пакеты
-        id: pkg
-        run: |
-          command -v cargo-deb >/dev/null || cargo install --locked cargo-deb
-          command -v cargo-generate-rpm >/dev/null || cargo install --locked cargo-generate-rpm
-          tools/appimage.sh
-          cargo deb --no-build
-          cargo generate-rpm
-          echo "deb=$(ls target/debian/*.deb)" >> "$GITHUB_OUTPUT"
-          echo "rpm=$(ls target/generate-rpm/*.rpm)" >> "$GITHUB_OUTPUT"
-
-      - name: SHA-256
-        run: sha256sum target/release/yamusic-rs target/appimage/*.AppImage ${{ steps.pkg.outputs.deb }} ${{ steps.pkg.outputs.rpm }}
-
-      # По файлу на артефакт: без zip каждый скачивается как есть.
-      - uses: actions/upload-artifact@v7
-        with:
-          path: target/appimage/yamusic-rs-x86_64.AppImage
-          archive: false
-      - uses: actions/upload-artifact@v7
-        with:
-          path: ${{ steps.pkg.outputs.deb }}
-          archive: false
-      - uses: actions/upload-artifact@v7
-        with:
-          path: ${{ steps.pkg.outputs.rpm }}
-          archive: false
+          name: macos-dmg
+          path: target/release/yamusic-rs-*.dmg
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux, macos]
+    needs: [macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
