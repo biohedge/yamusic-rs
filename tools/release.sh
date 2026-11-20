@@ -54,7 +54,9 @@ tools/make_dmg.sh
 DMG="target/release/yamusic-rs-$VERSION.dmg"
 hdiutil verify -quiet "$DMG"
 SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
-PREV=$(git describe --tags --abbrev=0 "$TAG^")
+# Только теги релизов: служебные (вроде pre-merge-…) не должны становиться
+# базой списка изменений.
+PREV=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^")
 
 BODY="Сборка universal (Apple Silicon и Intel) из коммита $(git rev-parse --short HEAD).
 
