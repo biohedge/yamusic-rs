@@ -34,6 +34,7 @@ pub enum Data {
 struct Slot {
     data: Option<Result<Arc<Data>, String>>,
     loading: bool,
+    refresh_again: bool,
     at: Instant,
     /// Приблизительный объём данных в байтах — для весового лимита кэша.
     weight: usize,
@@ -220,7 +221,7 @@ impl Net {
             s.at = Instant::now();
             return s.data.clone();
         }
-        st.insert(key.to_string(), Slot { data: None, loading: true, at: Instant::now(), weight: 0 });
+        st.insert(key.to_string(), Slot { data: None, loading: true, refresh_again: false, at: Instant::now(), weight: 0 });
         evict(&mut st);
         drop(st);
         self.load(key);
@@ -241,7 +242,7 @@ impl Net {
     pub fn refresh(&self, key: &str) {
         let mut st = self.store.lock().unwrap();
         match st.get_mut(key) {
-            Some(s) if s.loading => return,
+            Some(s) if s.loading => { s.refresh_again = true; return; }
             Some(s) => s.loading = true,
             None => return,
         }
@@ -251,7 +252,7 @@ impl Net {
 
     fn load(&self, key: &str) {
         let (api, uid, store, notify, key) = (self.api.clone(), self.uid.clone(), self.store.clone(), self.notify.clone(), key.to_string());
-        std::thread::spawn(move || {
+        std::thread::spawn(move || loop {
             let res = fetch(&api, &uid, &key).map(Arc::new);
             if let Err(e) = &res {
                 log(format!("{key}: {e}"));
@@ -263,7 +264,6 @@ impl Net {
                 notify();
                 return;
             };
-            slot.loading = false;
             match (&slot.data, res) {
                 (Some(Ok(_)), Err(_)) => {}
                 (_, res) => {
@@ -271,9 +271,12 @@ impl Net {
                     slot.data = Some(res);
                 }
             }
+            if std::mem::take(&mut slot.refresh_again) { continue; }
+            slot.loading = false;
             evict(&mut st);
             drop(st);
             notify();
+            break;
         });
     }
 
@@ -331,7 +334,7 @@ mod tests {
         let mut st: HashMap<String, Slot> = HashMap::new();
         let now = Instant::now();
         for (i, w) in [(0u64, 3_000_000usize), (1, 3_000_000), (2, 3_000_000)] {
-            st.insert(format!("k{i}"), Slot { data: None, loading: false, at: now + std::time::Duration::from_secs(i), weight: w });
+            st.insert(format!("k{i}"), Slot { data: None, loading: false, refresh_again: false, at: now + std::time::Duration::from_secs(i), weight: w });
         }
         evict(&mut st);
         let total: usize = st.values().map(|s| s.weight).sum();
@@ -343,8 +346,8 @@ mod tests {
     fn store_keeps_loading_slots() {
         let mut st: HashMap<String, Slot> = HashMap::new();
         let now = Instant::now();
-        st.insert("old".into(), Slot { data: None, loading: true, at: now, weight: 5_000_000 });
-        st.insert("new".into(), Slot { data: None, loading: false, at: now + std::time::Duration::from_secs(1), weight: 5_000_000 });
+        st.insert("old".into(), Slot { data: None, loading: true, refresh_again: false, at: now, weight: 5_000_000 });
+        st.insert("new".into(), Slot { data: None, loading: false, refresh_again: false, at: now + std::time::Duration::from_secs(1), weight: 5_000_000 });
         evict(&mut st);
         assert!(st.contains_key("old"), "загружающуюся запись выселять нельзя");
         assert!(!st.contains_key("new"));

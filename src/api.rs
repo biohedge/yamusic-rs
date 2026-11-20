@@ -47,7 +47,16 @@ pub struct Named {
 }
 
 #[derive(Clone, Debug)]
+struct PlaylistSlot {
+    revision: u64,
+    index: usize,
+    album: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct Track {
+    /// Ревизия и серверная позиция строки, выбранной пользователем.
+    playlist_slot: Option<Box<PlaylistSlot>>,
     pub id: String,
     pub album_id: Option<String>,
     pub title: String,
@@ -64,6 +73,8 @@ pub struct Track {
     pub album_title: String,
     pub year: Option<u32>,
     pub position: Option<u32>,
+    /// Пакет волны, из которого пришёл трек: с ним уходит фидбек по этому треку.
+    pub batch_id: String,
 }
 
 impl Track {
@@ -190,6 +201,13 @@ pub struct Lyrics {
     pub writers: String,
 }
 
+/// Откуда брать следующий пакет волны.
+pub enum WaveSession {
+    New,
+    Next(String),
+    Clone(String),
+}
+
 pub struct Batch {
     pub tracks: Vec<Track>,
     pub liked: Vec<String>,
@@ -253,6 +271,39 @@ fn join_names(a: &[Named]) -> String {
     a.iter().map(|n| n.name.as_str()).collect::<Vec<_>>().join(", ")
 }
 
+fn playlist_entry_track(item: &Value, mut track: Track, revision: Option<u64>, index: usize) -> Track {
+    track.playlist_slot = revision.map(|revision| Box::new(PlaylistSlot { revision, index, album: s(item.get("albumId")) }));
+    track
+}
+
+fn playlist_remove_index(list: &Value, track: &Track) -> Res<usize> {
+    let items = list.get("tracks").and_then(Value::as_array).ok_or("нет списка треков")?;
+    let slot = track.playlist_slot.as_ref().ok_or("Нет ревизии показанного плейлиста. Обновите список")?;
+    if list.get("revision").and_then(Value::as_u64) != Some(slot.revision) {
+        return Err("Плейлист изменился. Выберите трек ещё раз после обновления".into());
+    }
+    let item = items.get(slot.index).ok_or("трек уже отсутствует в плейлисте")?;
+    let id = s(item.get("id")).or_else(|| s(item.pointer("/track/id")));
+    if id.as_ref() != Some(&track.id) || s(item.get("albumId")) != slot.album {
+        return Err("Запись плейлиста изменилась. Обновите список".into());
+    }
+    Ok(slot.index)
+}
+
+#[cfg(test)]
+#[test]
+fn removal_uses_unfiltered_server_order() {
+    let track = parse_track(&json!({"id": 7, "title": "A"})).unwrap();
+    let list = json!({"revision":12,"tracks":[{"id":1,"available":false},{"id":7,"albumId":3},{"id":7,"albumId":3}]});
+    let selected = playlist_entry_track(&list["tracks"][2], track.clone(), Some(12), 2);
+    assert_eq!(playlist_remove_index(&list, &selected), Ok(2));
+    let mut changed = list.clone();
+    changed["revision"] = json!(13);
+    assert!(playlist_remove_index(&changed, &selected).is_err());
+    assert!(playlist_remove_index(&list, &track).is_err());
+
+}
+
 pub(crate) fn parse_track(v: &Value) -> Option<Track> {
     if v.get("available").and_then(|x| x.as_bool()) == Some(false) {
         return None;
@@ -265,6 +316,7 @@ pub(crate) fn parse_track(v: &Value) -> Option<Track> {
     let li = v.get("lyricsInfo");
     let flag = |k: &str| li.and_then(|l| l.get(k)).and_then(|x| x.as_bool()).unwrap_or(false);
     Some(Track {
+        playlist_slot: None,
         id,
         album_id: album.and_then(|a| s(a.get("id"))),
         title,
@@ -280,6 +332,7 @@ pub(crate) fn parse_track(v: &Value) -> Option<Track> {
         album_title: album.map(|a| str_of(a, "title")).unwrap_or_default(),
         year: album.and_then(|a| a.get("year")).and_then(|y| y.as_u64()).map(|y| y as u32),
         position: album.and_then(|a| a.pointer("/trackPosition/index")).and_then(|y| y.as_u64()).map(|y| y as u32),
+        batch_id: String::new(),
     })
 }
 
@@ -354,8 +407,16 @@ static LANG: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
 /// «Меньше ИИ»: оригинал шлёт его заголовком в запросах сессий ротора.
 pub static LESS_AI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// «Треки 18+»: выключено — новая сессия волны просит без них (`allowExplicit`), а плеер
+/// пропускает треки с пометкой E, как оригинал с фильтром очереди.
+pub static ALLOW_EXPLICIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn allow_explicit() -> bool {
+    ALLOW_EXPLICIT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Время для фидбека сессий — ISO 8601 в UTC, как `new Date().toISOString()`.
-fn iso_now() -> String {
+pub fn iso_now() -> String {
     let d = now();
     let secs = d.as_secs() as i64;
     let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
@@ -379,7 +440,14 @@ fn iso_now() -> String {
 }
 
 /// Фидбек сессии ротора: radioStarted / trackStarted / trackFinished / skip.
-pub fn session_event(kind: &str, track: Option<&str>, played: Option<f64>, batch_id: &str, from: &str) -> Value {
+pub fn session_event(
+    kind: &str,
+    track: Option<&str>,
+    played: Option<f64>,
+    length: Option<f64>,
+    batch_id: &str,
+    from: &str,
+) -> Value {
     let mut event = json!({ "type": kind, "timestamp": iso_now() });
     if kind == "radioStarted" {
         event["from"] = json!(from);
@@ -389,6 +457,9 @@ pub fn session_event(kind: &str, track: Option<&str>, played: Option<f64>, batch
     }
     if let Some(p) = played {
         event["totalPlayedSeconds"] = json!(p);
+    }
+    if let Some(l) = length {
+        event["trackLengthSeconds"] = json!(l);
     }
     let mut body = json!({ "event": event, "from": from });
     if !batch_id.is_empty() && kind != "radioStarted" {
@@ -402,7 +473,8 @@ fn parse_batch(v: &Value, session: String) -> Res<Batch> {
     let mut tracks = Vec::new();
     let mut liked = Vec::new();
     for it in v.get("sequence").and_then(|s| s.as_array()).into_iter().flatten() {
-        if let Some(t) = it.get("track").and_then(parse_track) {
+        if let Some(mut t) = it.get("track").and_then(parse_track) {
+            t.batch_id = batch_id.clone();
             if it.get("liked").and_then(|x| x.as_bool()) == Some(true) {
                 liked.push(t.id.clone());
             }
@@ -825,6 +897,18 @@ impl Api {
     /// Запрос к API или по адресу из ответа сервера. Токен добавляется, только если адрес
     /// https и на хосте Яндекса: подменённый ответ не уведёт его на чужой сервер.
     fn req(&self, method: Method, path_or_url: &str) -> RequestBuilder {
+        self.req_as(method, path_or_url, ANDROID_CLIENT)
+    }
+
+    /// Запрос от имени десктопного клиента, с теми же заголовками, что у оригинала.
+    /// Заголовок клиента ровно один: reqwest не заменяет заголовок, а добавляет второй.
+    fn desktop_req(&self, method: Method, path: &str) -> RequestBuilder {
+        self.req_as(method, path, crate::client::desktop_client())
+            .header("X-Yandex-Music-Device", crate::client::device_header())
+            .header("X-Yandex-Music-Without-Invocation-Info", "1")
+    }
+
+    fn req_as(&self, method: Method, path_or_url: &str, client: &str) -> RequestBuilder {
         let url = if path_or_url.starts_with("https://") || path_or_url.starts_with("http://") {
             path_or_url.to_string()
         } else {
@@ -834,7 +918,7 @@ impl Api {
         let mut rb = self
             .http
             .request(method, url)
-            .header("X-Yandex-Music-Client", ANDROID_CLIENT)
+            .header("X-Yandex-Music-Client", client)
             .header("Accept-Language", lang());
         if trusted && !self.token.is_empty() {
             rb = rb.header("Authorization", format!("OAuth {}", self.token));
@@ -895,11 +979,7 @@ impl Api {
 
     /// Блоки лендингов отвечают так же, как официальному приложению для Windows.
     pub fn get_raw(&self, path: &str) -> Res<Value> {
-        let (status, text) = self.send_text(
-            self.req(Method::GET, path)
-                .header("X-Yandex-Music-Client", crate::client::desktop_client())
-                .header("X-Yandex-Music-Without-Invocation-Info", "1"),
-        )?;
+        let (status, text) = self.send_text(self.desktop_req(Method::GET, path))?;
         if !status.is_success() {
             return Err(format!("HTTP {status}: {}", short(&text)));
         }
@@ -1018,12 +1098,7 @@ impl Api {
                 _ => return Err(format!("нельзя закрепить {target}")),
             }
         };
-        let (status, text) = self.send_text(
-            self.req(method, path)
-                .header("X-Yandex-Music-Client", crate::client::desktop_client())
-                .query(&query)
-                .json(&body),
-        )?;
+        let (status, text) = self.send_text(self.desktop_req(method, path).query(&query).json(&body))?;
         if status.is_success() {
             Ok(())
         } else {
@@ -1103,12 +1178,7 @@ impl Api {
     }
 
     pub fn wheel(&self) -> Res<Vec<WheelItem>> {
-        let (status, text) = self.send_text(
-            self.req(Method::POST, "/wheel/new")
-                .header("X-Yandex-Music-Client", crate::client::desktop_client())
-                .header("X-Yandex-Music-Without-Invocation-Info", "1")
-                .json(&json!({})),
-        )?;
+        let (status, text) = self.send_text(self.desktop_req(Method::POST, "/wheel/new").json(&json!({})))?;
         if !status.is_success() {
             return Err(format!("HTTP {status}: {}", short(&text)));
         }
@@ -1156,11 +1226,7 @@ impl Api {
     // ---------- волна ----------
 
     fn session_req(&self, path: &str, body: &Value) -> Res<Value> {
-        let mut rb = self
-            .req(Method::POST, path)
-            .header("X-Yandex-Music-Client", crate::client::desktop_client())
-            .header("X-Yandex-Music-Without-Invocation-Info", "1")
-            .json(body);
+        let mut rb = self.desktop_req(Method::POST, path).json(body);
         if LESS_AI.load(std::sync::atomic::Ordering::Relaxed) {
             rb = rb.header("X-Yandex-Music-AI-Content-Rate", "reduced");
         }
@@ -1172,20 +1238,44 @@ impl Api {
         Ok(take_result(v))
     }
 
-    /// Треки волны через сессию ротора, как у оригинала: новая сессия по seeds,
-    /// дальше `/tracks` с недавней очередью. Отложенные фидбеки (пропуск, дослушал) уходят
-    /// в том же запросе, чтобы сервер подбирал следующие треки уже с их учётом.
-    /// Истёкшую сессию заменяем новой.
-    pub fn wave_session(&self, station: &str, session: Option<&str>, queue: &[String], feedbacks: &[Value]) -> Res<Batch> {
-        if let Some(id) = session.filter(|s| !s.is_empty()) {
-            let mut body = json!({ "queue": queue });
-            if !feedbacks.is_empty() {
-                body["feedbacks"] = json!(feedbacks);
+    /// Треки волны через сессию ротора, как у оригинала.
+    ///
+    /// `Session::Next` — следующий пакет: в `queue` уходят трек, на котором сменился трек, и
+    /// тот, что заиграл после него, а с ними отложенные фидбеки (пропуск, дослушал), чтобы
+    /// сервер подбирал треки уже с их учётом. `Session::Clone` — продолжение волны после
+    /// перезапуска: сервер заводит новую сессию с историей старой. Если сессия истекла или
+    /// её нет, начинается новая.
+    pub fn wave_session(&self, station: &str, session: WaveSession, queue: &[String], feedbacks: &[Value]) -> Res<Batch> {
+        match session {
+            WaveSession::Next(id) => {
+                let mut body = json!({ "queue": queue });
+                if !feedbacks.is_empty() {
+                    body["feedbacks"] = json!(feedbacks);
+                }
+                match self.session_req(&format!("/rotor/session/{id}/tracks"), &body) {
+                    Ok(v) => return parse_batch(&v, id.to_string()),
+                    Err(e) => crate::config::log(format!("сессия {id}: {e}, начинаем новую")),
+                }
             }
-            match self.session_req(&format!("/rotor/session/{id}/tracks"), &body) {
-                Ok(v) => return parse_batch(&v, id.to_string()),
-                Err(e) => crate::config::log(format!("сессия {id}: {e}, начинаем новую")),
+            WaveSession::Clone(id) => {
+                let mut body = json!({
+                    "queue": queue,
+                    "includeTracksInResponse": true,
+                    "includeWaveModel": true,
+                    "interactive": false,
+                });
+                if !allow_explicit() {
+                    body["allowExplicit"] = json!(false);
+                }
+                match self.session_req(&format!("/rotor/session/{id}/clone"), &body) {
+                    Ok(v) => {
+                        let id = str_of(&v, "radioSessionId");
+                        return parse_batch(&v, id);
+                    }
+                    Err(e) => crate::config::log(format!("сессия {id}: {e}, начинаем новую")),
+                }
             }
+            WaveSession::New => {}
         }
         let mut seeds = vec![station.to_string()];
         if station == WAVE {
@@ -1197,15 +1287,29 @@ impl Api {
             "includeWaveModel": true,
             "interactive": true,
         });
-        if !queue.is_empty() {
-            body["queue"] = json!(queue);
-        }
-        if LESS_AI.load(std::sync::atomic::Ordering::Relaxed) {
-            body["aiContentReductionEnabled"] = json!(true);
+        if !allow_explicit() {
+            body["allowExplicit"] = json!(false);
         }
         let v = self.session_req("/rotor/session/new", &body)?;
         let id = str_of(&v, "radioSessionId");
         parse_batch(&v, id)
+    }
+
+    /// История прослушиваний: оригинал шлёт её при каждой смене трека. Без неё сервер не знает,
+    /// что звучало, и рекомендации (волна в том числе) не подстраиваются под вкус.
+    pub fn plays(&self, uid: &str, play: &Value) -> Res<()> {
+        let now = iso_now();
+        let rb = self
+            .desktop_req(Method::POST, "/plays")
+            .header("X-Yandex-Music-Multi-Auth-User-Id", uid)
+            .query(&[("clientNow", now.as_str())])
+            .json(&json!({ "plays": [play] }));
+        let (status, text) = self.send_text(rb)?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(format!("HTTP {status}: {}", short(&text)))
+        }
     }
 
     /// Настройки «Моей волны» («По характеру», «Под настроение», «По языку»), выбранные в любом
@@ -1237,10 +1341,10 @@ impl Api {
     }
 
     /// Фидбек станции: radioStarted / trackStarted / trackFinished / skip.
-    pub fn feedback(&self, station: &str, kind: &str, track: Option<&str>, played: Option<f64>, batch_id: &str) -> Res<()> {
+    pub fn feedback(&self, station: &str, kind: &str, track: Option<&str>, played: Option<f64>, batch_id: &str, from: &str) -> Res<()> {
         let mut body = json!({ "type": kind, "timestamp": now().as_secs_f64() });
         if kind == "radioStarted" {
-            body["from"] = json!(format!("desktop_win-radio-{}-default", station.replace(':', "-")));
+            body["from"] = json!(from);
         }
         if let Some(t) = track {
             body["trackId"] = json!(t);
@@ -1330,10 +1434,15 @@ impl Api {
         let v = self.get(&format!("/users/{uid}/playlists/{kind}"), &[])?;
         let pl = parse_playlist(&v).ok_or("нет данных о плейлисте")?;
         let items: &[Value] = v.get("tracks").and_then(|t| t.as_array()).map(|a| a.as_slice()).unwrap_or(&[]);
-        let mut tracks: Vec<Track> = items.iter().filter_map(|i| i.get("track").and_then(parse_track)).collect();
+        let revision = v.get("revision").and_then(Value::as_u64);
+        let mut tracks: Vec<Track> = items.iter().enumerate().filter_map(|(index, i)| Some(playlist_entry_track(i, parse_track(i.get("track")?)?, revision, index))).collect();
         if tracks.is_empty() && !items.is_empty() {
             let ids: Vec<String> = items.iter().filter_map(|i| s(i.get("id"))).collect();
-            tracks = self.tracks(&ids)?;
+            let found: std::collections::HashMap<_, _> = self.tracks(&ids)?.into_iter().map(|t| (t.id.clone(), t)).collect();
+            tracks = items.iter().enumerate().filter_map(|(index, item)| {
+                let track = found.get(&s(item.get("id"))?)?;
+                Some(playlist_entry_track(item, track.clone(), revision, index))
+            }).collect();
         }
         Ok((pl, tracks))
     }
@@ -1374,12 +1483,13 @@ impl Api {
         .map(|_| ())
     }
 
-    /// Удаляет трек на позиции `at`. Ревизия свежая по той же причине, что и при добавлении.
-    pub fn remove_from_playlist(&self, uid: &str, kind: &str, at: usize, t: &Track) -> Res<()> {
+    /// Индекс и ревизия должны относиться к одному снимку плейлиста.
+    pub fn remove_from_playlist(&self, uid: &str, kind: &str, t: &Track) -> Res<()> {
         let v = self.get(&format!("/users/{uid}/playlists/{kind}"), &[])?;
-        let revision = v.get("revision").and_then(|r| r.as_u64()).unwrap_or(1).to_string();
+        let revision = v.get("revision").and_then(Value::as_u64).ok_or("нет ревизии плейлиста")?.to_string();
+        let at = playlist_remove_index(&v, t)?;
         let mut item = json!({ "id": t.id });
-        if let Some(a) = &t.album_id {
+        if let Some(a) = t.playlist_slot.as_ref().and_then(|slot| slot.album.as_ref()).or(t.album_id.as_ref()) {
             item["albumId"] = json!(a);
         }
         let diff = json!([{ "op": "delete", "from": at, "to": at + 1, "tracks": [item] }]).to_string();
@@ -1540,7 +1650,6 @@ let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == So
         Ok(n)
     }
 
-    /// Скачать файл целиком (аудио, обложка). Ссылки уже подписаны — без токена.
     pub fn fetch_bytes(&self, url: &str) -> Res<Vec<u8>> {
         let resp = self.http.get(url).send().map_err(|e| format!("сеть: {}", crate::config::chain(&e)))?;
         if !resp.status().is_success() {

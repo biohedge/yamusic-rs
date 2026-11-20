@@ -420,17 +420,17 @@ export component ListPage inherits Rectangle {
                 property <TrackItem> item: App.tracks[idx];
                 property <bool> current: idx == App.list-current;
                 border-radius: Theme.radius-size-m;
-                property <bool> hot: ta.has-hover || more-ta.has-hover;
+                property <bool> hot: ta.has-hover || like-ta.has-hover || more-ta.has-hover;
                 background: current || hot ? Theme.controls-color-secondary-default-disabled : transparent;
                 ta := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { App.play-list(idx); } }
                 if hot || current: Icon {
-                    x: 0;
+                    x: 8px;
                     source: current && App.playing ? Icons.pause-filled-xs : Icons.play-filled-xs;
                     size: 28px;
                     colorize: Theme.controls-color-primary-text-enabled;
                 }
                 if !hot && !current: Text {
-                    x: 0;
+                    x: 8px;
                     width: 28px;
                     horizontal-alignment: center;
                     text: idx + 1;
@@ -438,8 +438,8 @@ export component ListPage inherits Rectangle {
                     color: Theme.controls-color-primary-text-enabled;
                 }
                 HorizontalLayout {
-                    x: 36px;
-                    width: parent.width - 36px - 120px;
+                    x: 44px;
+                    width: parent.width - 44px - 136px;
                     height: 20px;
                     spacing: 4px;
                     Text {
@@ -463,7 +463,7 @@ export component ListPage inherits Rectangle {
                     Rectangle { horizontal-stretch: 1; }
                 }
                 Rectangle {
-                    x: parent.width - 95px;
+                    x: parent.width - 111px;
                     width: 40px;
                     height: 40px;
                     Icon {
@@ -471,14 +471,14 @@ export component ListPage inherits Rectangle {
                         size: 20px;
                         colorize: Theme.controls-color-primary-text-enabled;
                     }
-                    TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { App.like-track(idx); } }
+                    like-ta := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { App.like-track(idx); } }
                 }
                 Rectangle {
-                    x: parent.width - 40px + 8px;
+                    x: parent.width - 40px - 8px;
                     width: 40px;
                     height: 40px;
-                    visible: hot;
                     Icon {
+                        visible: hot;
                         source: Icons.more-small;
                         size: 20px;
                         colorize: more-ta.has-hover ? Theme.controls-color-primary-text-enabled-variant : Theme.controls-color-primary-text-enabled;
@@ -489,7 +489,7 @@ export component ListPage inherits Rectangle {
                     }
                 }
                 if !hot: Text {
-                    x: parent.width - 2px - self.width;
+                    x: parent.width - 18px - self.width;
                     text: item.duration;
                     font-size: Theme.font-size-label-m;
                     font-weight: 500;

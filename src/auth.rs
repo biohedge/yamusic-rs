@@ -41,7 +41,7 @@ fn post(form: &[(&str, &str)], path: &str) -> Result<Value, String> {
 }
 
 /// Постоянный id устройства: Яндекс показывает его в списке устройств аккаунта.
-fn device_id() -> String {
+pub fn device_id() -> String {
     let path = crate::config::dir().join("device");
     if let Ok(id) = std::fs::read_to_string(&path) {
         let id = id.trim().to_string();

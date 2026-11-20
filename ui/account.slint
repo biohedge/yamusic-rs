@@ -65,6 +65,23 @@ component PickRow inherits Rectangle {
     }
 }
 
+component Toggle inherits Rectangle {
+    in property <bool> on;
+    width: 32px;
+    height: 20px;
+    border-radius: 10px;
+    background: on ? #ffee00 : Theme.dark ? #ffffff1f : #00000012;
+    Rectangle {
+        x: on ? 14px : 2px;
+        y: 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: on ? #000000 : Theme.dark ? #ffffff66 : #ffffffa3;
+        animate x { duration: App.motion ? 150ms : 0ms; }
+    }
+}
+
 export component AccountMenu inherits Rectangle {
     property <color> ink: Theme.dark ? #ffffff : #262633;
     property <brush> bg: Theme.dark ? #1f1f22 : #ffffff;
@@ -87,7 +104,7 @@ export component AccountMenu inherits Rectangle {
         x: 28px;
         y: root.height - 90px - self.height;
         width: 320px;
-        height: 399px;
+        height: 443px;
         border-radius: 24px;
         background: bg;
         drop-shadow-blur: 24px;
@@ -159,6 +176,17 @@ export component AccountMenu inherits Rectangle {
             active: App.account-sub == 1;
             clicked => { App.account-sub = App.account-sub == 1 ? -1 : 1; }
         }
+        // Своё, в Яндекс ID такого нет: просили держать под рукой, а не в настройках.
+        IdRow {
+            x: 8px;
+            y: 383px;
+            width: 296px;
+            ink: ink;
+            icon: Icons.explicit;
+            text: T.t("Треки 18+");
+            clicked => { root.act("explicit"); }
+            Toggle { x: parent.width - 16px - self.width; on: App.allow-explicit; }
+        }
 
         if App.account-sub == 0: Rectangle {
             x: 12px;
@@ -191,23 +219,6 @@ export component AccountMenu inherits Rectangle {
             PickRow { y: 48px; width: parent.width; ink: ink; icon: Icons.id-dark; text: T.t("Всегда тёмный"); selected: App.theme-mode == "dark"; clicked => { root.act("theme:dark"); } }
             PickRow { y: 96px; width: parent.width; ink: ink; icon: Icons.id-system; text: T.t("Как в системе"); selected: App.theme-mode != "light" && App.theme-mode != "dark"; clicked => { root.act("theme:system"); } }
         }
-    }
-}
-
-component Toggle inherits Rectangle {
-    in property <bool> on;
-    width: 32px;
-    height: 20px;
-    border-radius: 10px;
-    background: on ? #ffee00 : Theme.dark ? #ffffff1f : #00000012;
-    Rectangle {
-        x: on ? 14px : 2px;
-        y: 2px;
-        width: 16px;
-        height: 16px;
-        border-radius: 8px;
-        background: on ? #000000 : Theme.dark ? #ffffff66 : #ffffffa3;
-        animate x { duration: App.motion ? 150ms : 0ms; }
     }
 }
 
@@ -388,6 +399,13 @@ export component SettingsPage inherits Rectangle {
                 toggle: true;
                 on: App.autostart;
                 clicked => { App.setting("autostart"); }
+            }
+            SettingItem {
+                title: T.t("Проверять обновления");
+                desc: T.t("Раз в полчаса спрашивать GitHub, нет ли новой версии");
+                toggle: true;
+                on: App.check-updates;
+                clicked => { App.setting("check-updates"); }
             }
             SettingItem {
                 title: T.t("Выйти из аккаунта");

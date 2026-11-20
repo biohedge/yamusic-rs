@@ -17,6 +17,14 @@ pub const POLL: Duration = Duration::from_secs(30 * 60);
 #[cfg_attr(not(windows), allow(dead_code))]
 const ASSET: &str = concat!(env!("CARGO_PKG_NAME"), ".exe");
 
+/// Проверка включена в настройках («Проверять обновления»).
+pub static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Страница GitHub со всеми изменениями между запущенной версией и новой.
+pub fn changes_url(version: &str) -> String {
+    format!("{}/compare/v{}...v{version}", env!("CARGO_PKG_REPOSITORY"), env!("CARGO_PKG_VERSION"))
+}
+
 /// Аргумент, с которым обновлённый exe ждёт, пока закроется старый.
 pub const AFTER_UPDATE: &str = "--after-update";
 

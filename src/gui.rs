@@ -1111,6 +1111,13 @@ impl Ctx {
 /// Масштаб как у оригинала: начиная с 1920 CSS-пикселей ширины корневой шрифт
 /// `0.75rem + 0.3vw`, и всё, что задано в rem, растёт вместе с ним.
 fn apply_ui_scale(ui: &AppWindow) {
+    rescale(ui, false);
+}
+
+/// `force` — после переноса на монитор с другим масштабом: размер и масштаб окна пересылаются
+/// Slint заново, даже если масштаб совпал, и окно перерисовывается целиком. Иначе после
+/// переноса могла остаться недорисованная часть окна (#16).
+fn rescale(ui: &AppWindow, force: bool) {
     let w = ui.window();
     let phys = w.size();
     if phys.width == 0 || phys.height == 0 {
@@ -1122,11 +1129,71 @@ fn apply_ui_scale(ui: &AppWindow) {
     let target = base * k;
     ui.global::<App>().set_ui_scale(k);
     ui.global::<App>().set_dpr(target);
-    if (w.scale_factor() - target).abs() < 0.001 {
+    if !force && (w.scale_factor() - target).abs() < 0.001 {
         return;
     }
     w.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged { scale_factor: target });
     w.dispatch_event(slint::platform::WindowEvent::Resized { size: phys.to_logical(target) });
+    if force {
+        full_repaint(ui);
+    }
+}
+
+/// Перерисовать окно целиком, а не только изменившиеся места. Кадр выводится в окно через GDI,
+/// и часть окна за краем экрана при этом отсекается: если окно потом вернуть на экран, там
+/// осталась бы пустота или старый кадр (#16).
+fn full_repaint(ui: &AppWindow) {
+    ui.global::<App>().set_repaint(true);
+    let weak = ui.as_weak();
+    Timer::single_shot(Duration::from_millis(50), move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.global::<App>().set_repaint(false);
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+thread_local! {
+    static LAST_CURSOR: std::cell::Cell<slint::LogicalPosition> = const { std::cell::Cell::new(slint::LogicalPosition::new(0.0, 0.0)) };
+}
+
+/// На Linux окно двигает и тянет за край сам композитор, и отпускание кнопки до нас не доходит.
+/// Slint так и считает левую зажатой и отдаёт все клики полосе заголовка, а та снова начинает
+/// перетаскивание (#17). Отпускаем кнопку за него. Не прямо здесь: мы внутри обработки нажатия.
+fn release_after_system_drag(ui: &AppWindow) {
+    #[cfg(target_os = "linux")]
+    {
+        let weak = ui.as_weak();
+        Timer::single_shot(Duration::ZERO, move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased {
+                    position: LAST_CURSOR.get(),
+                    button: slint::platform::PointerEventButton::Left,
+                });
+            }
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = ui;
+}
+
+thread_local! {
+    static MOVED: Timer = Timer::default();
+}
+
+/// Окно сдвинули: перерисовать целиком, когда его перестанут двигать.
+fn after_move() {
+    MOVED.with(|t| {
+        t.start(TimerMode::SingleShot, Duration::from_millis(150), || with_ctx(|c| full_repaint(&c.ui())));
+    });
+}
+
+/// Окно перенесли на монитор с другим масштабом. Пока его тащат, Windows может прислать
+/// смену масштаба несколько раз, поэтому пересчёт ещё раз — когда всё уляжется.
+fn after_dpi_change() {
+    for ms in [0, 300] {
+        Timer::single_shot(Duration::from_millis(ms), || with_ctx(|c| rescale(&c.ui(), true)));
+    }
 }
 
 /// Чат поддержки, как `createSupportChatUrl` оригинала.
@@ -1224,6 +1291,10 @@ fn start_updates(ui: &AppWindow) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(10));
         loop {
+            if !crate::update::ENABLED.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_secs(60));
+                continue;
+            }
             match crate::update::check() {
                 Ok(Some(r)) => {
                     let weak = weak.clone();
@@ -1238,6 +1309,11 @@ fn start_updates(ui: &AppWindow) {
                 Err(e) => log(format!("обновления: {e}")),
             }
             std::thread::sleep(crate::update::POLL);
+        }
+    });
+    ui.global::<App>().on_update_changes(|| {
+        if let Some(r) = UPDATE.with(|u| u.borrow().clone()) {
+            sys::open_url(&crate::update::changes_url(&r.version));
         }
     });
     ui.global::<App>().on_update_install(|| {
@@ -1446,8 +1522,10 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     // Спрайт (вся SVG-строка) нужен только для нарезки иконок — дальше не держим его в памяти.
     drop(assets);
     load_id_icons(&ui);
+    crate::update::ENABLED.store(cfg.check_updates, Ordering::Relaxed);
     start_updates(&ui);
 
+    crate::api::ALLOW_EXPLICIT.store(cfg.allow_explicit, Ordering::Relaxed);
     let player = Player::spawn(notifier());
     // macOS: медиа-клавиши, карточка «Сейчас играет» и возврат «светофора» после fullscreen.
     #[cfg(target_os = "macos")]
@@ -1483,6 +1561,8 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     app.set_discord_on(cfg.discord_enabled);
     app.set_gpu(cfg.gpu);
     app.set_autostart(sys::autostart_enabled());
+    app.set_check_updates(cfg.check_updates);
+    app.set_allow_explicit(cfg.allow_explicit);
     app.set_linux(cfg!(target_os = "linux"));
     app.set_translations(crate::i18n::available());
     app.set_download_dir(music_dir(&cfg).display().to_string().into());
@@ -1560,9 +1640,6 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     let p = player.clone();
     app.on_play_pause(move || {
         let started = CTX.with(|c| c.borrow().as_ref().map(|c| c.st.borrow().started)).unwrap_or(true);
-        if p.state().track.is_none() {
-            p.send(Cmd::Wave(Source::Wave));
-        }
         if started {
             p.send(Cmd::PlayPause);
         } else {
@@ -1721,6 +1798,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             ui.window().with_winit_window(|w| {
                 let _ = w.drag_window();
             });
+            release_after_system_drag(&ui);
         }
     });
     let weak = ui.as_weak();
@@ -1777,6 +1855,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             ui.window().with_winit_window(|w| {
                 let _ = w.drag_resize_window(d);
             });
+            release_after_system_drag(&ui);
         }
     });
     let weak = ui.as_weak();
@@ -1842,10 +1921,16 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
         });
     }
 
-    ui.window().on_winit_window_event(|_, ev| {
+    ui.window().on_winit_window_event(|_w, ev| {
         use slint::winit_030::EventResult;
         use winit::event::{ElementState, MouseButton, WindowEvent};
         match ev {
+            #[cfg(target_os = "linux")]
+            WindowEvent::CursorMoved { position, .. } => {
+                let p = position.to_logical::<f32>(_w.scale_factor() as f64);
+                LAST_CURSOR.set(slint::LogicalPosition::new(p.x, p.y));
+                EventResult::Propagate
+            }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Back, .. } => {
                 with_ctx(|c| c.go_back());
                 EventResult::PreventDefault
@@ -1860,6 +1945,14 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             WindowEvent::CloseRequested => {
                 with_ctx(|c| c.ui().global::<App>().invoke_close());
                 EventResult::PreventDefault
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                after_dpi_change();
+                EventResult::Propagate
+            }
+            WindowEvent::Moved(_) => {
+                after_move();
+                EventResult::Propagate
             }
             _ => EventResult::Propagate,
         }
@@ -2642,6 +2735,15 @@ impl Ctx {
             ui.global::<Theme>().set_dark(app.get_page() == Page::Wave || dark);
             return;
         }
+        if id == "explicit" {
+            let allow = !app.get_allow_explicit();
+            app.set_allow_explicit(allow);
+            self.player.send(Cmd::AllowExplicit(allow));
+            let mut st = self.st.borrow_mut();
+            st.cfg.allow_explicit = allow;
+            st.cfg.save();
+            return;
+        }
         app.set_account_open(false);
         match id {
             "account" => sys::open_url("https://id.yandex.ru"),
@@ -2732,6 +2834,18 @@ impl Ctx {
                 } else {
                     self.toast("Не удалось изменить автозапуск");
                 }
+            }
+            "check-updates" => {
+                let on = !app.get_check_updates();
+                app.set_check_updates(on);
+                crate::update::ENABLED.store(on, Ordering::Relaxed);
+                if !on {
+                    app.set_update_version(SharedString::new());
+                    UPDATE.with(|u| *u.borrow_mut() = None);
+                }
+                let mut st = self.st.borrow_mut();
+                st.cfg.check_updates = on;
+                st.cfg.save();
             }
             "logout" => self.logout(),
             _ => {}
@@ -2908,7 +3022,7 @@ impl Ctx {
             return;
         };
         std::thread::spawn(move || {
-            match net.api.remove_from_playlist(&uid, &kind, at, &t) {
+            match net.api.remove_from_playlist(&uid, &kind, &t) {
                 Ok(()) => net.say(format!("Трек «{}» удален из плейлиста «{title}»", t.title)),
                 Err(e) => net.say(format!("{}: {e}", crate::i18n::tr("Не удалось удалить трек из плейлиста"))),
             }

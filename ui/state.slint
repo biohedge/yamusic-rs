@@ -145,6 +145,9 @@ export global App {
     // macOS: запас сверху под светофор с Finder-inset (кнопки y19–33); страницы
     // сдвинуты на эту величину, градиенты шапок растянуты вверх. Иначе 0.
     in property <length> chrome-top;
+    // Слой на всё окно на один кадр: Slint перерисовывает место, где элемент появился и исчез,
+    // так окно рисуется целиком после переноса на другой монитор.
+    in property <bool> repaint;
     in property <string> toast;
     in property <image> toast-cover;
     in property <bool> toast-has-cover;
@@ -156,6 +159,12 @@ export global App {
     // Установщик скачивается.
     in property <bool> update-busy;
     callback update-install();
+    // «Что изменилось»: сравнение запущенной и новой версии на GitHub.
+    callback update-changes();
+    // «Проверять обновления» в настройках.
+    in property <bool> check-updates: true;
+    // «Треки 18+» в меню профиля.
+    in property <bool> allow-explicit: true;
     // Подсказка у значка «!»: текст дисклеймера рядом с курсором.
     in property <string> hint-text: "Возрастное ограничение 18+";
     in-out property <bool> hint-open;
