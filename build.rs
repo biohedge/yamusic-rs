@@ -1,6 +1,6 @@
 /// Имя приложения для людей: заголовок окна, трей, диспетчер задач, Discord, список устройств
 /// в аккаунте Яндекса. В коде доступно как `env!("APP_NAME")`.
-const APP_NAME: &str = "Я.Музыка [RS]";
+const APP_NAME: &str = "Яндекс Музыка RS";
 
 fn main() {
     println!("cargo:rustc-env=APP_NAME={APP_NAME}");

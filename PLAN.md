@@ -251,3 +251,12 @@
   форка добавлена проверка dmg через `shasum -a 256` (SHA-256 есть в описании релиза).
 - Проверки на macOS: `cargo clippy --release --all-targets -- -D warnings`,
   `cargo test --release` (29 passed, 5 ignored), `cargo build --release` — зелёные.
+
+### Возврат имени «Яндекс Музыка RS» (20.11.2026)
+
+- Отображаемое имя снова `Яндекс Музыка RS` (было «Я.Музыка [RS]»): `APP_NAME` в `build.rs`,
+  описание в `Cargo.toml`, заголовок и инструкции в `README.md`.
+- Ярлык и файл бандла снова `Яндекс Музыка RS.app`; dmg остаётся `yamusic-rs-<версия>.dmg`,
+  `CFBundleIdentifier` и метка LaunchAgent не меняются.
+- На GitHub обновлены описание репозитория и заголовок релиза `v1.1.3`. Slug остаётся
+  `yamusic-rs`, чтобы не менять ссылки, `repository` в `Cargo.toml` и обновлялку.
