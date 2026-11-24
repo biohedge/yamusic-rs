@@ -10,6 +10,7 @@
 ![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-2b2b30?labelColor=1c1c1f)
 ![Linux бета](https://img.shields.io/badge/Linux-%D0%B1%D0%B5%D1%82%D0%B0-2b2b30?labelColor=1c1c1f)
 ![Android бета](https://img.shields.io/badge/Android-%D0%B1%D0%B5%D1%82%D0%B0-2b2b30?labelColor=1c1c1f)
+[![Поддержать](https://img.shields.io/badge/%D0%BF%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%B0%D1%82%D1%8C-CloudTips-ffd60a?labelColor=1c1c1f)](https://pay.cloudtips.ru/p/befb620d)
 [![GPL-3.0](https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-GPL--3.0-2b2b30?labelColor=1c1c1f)](LICENSE)
 
 [Скачать](https://github.com/biohedge/yamusic-rs/releases/latest) ·
@@ -61,8 +62,12 @@
 - «Моя волна» с колесом вайбов и настройками «по характеру», «под настроение» и «по языку»,
   «Для вас и Тренды», «Концерты», «Книги и подкасты», чарт, поиск, коллекция и история прослушиваний.
 - Страницы исполнителей, альбомов и плейлистов. Свои плейлисты можно переименовывать, менять им
-  обложку и описание, удалять из них треки.
+  обложку и описание, удалять из них треки. Галочка в меню трека показывает, что он уже в плейлисте.
 - Полноэкранный плеер с текстом песни, который идёт вместе с треком.
+- Плеер показывает формат трека. В настройках можно включить плавный переход между треками
+  и движение пятна «Моей волны».
+- Плеер запоминает трек и позицию через Ynison, чтобы продолжить прослушивание здесь
+  или в официальном приложении.
 - Скачивание треков, альбомов и плейлистов с обложкой и тегами. В настройках можно выбрать папку
   и включить скачивание FLAC при наличии lossless.
 - Эквалайзер на 10 полос, логарифмическая громкость, светлая и тёмная тема, русский, английский,
@@ -324,6 +329,11 @@ API Яндекса неофициальный и может меняться б�
 
 ## Как помочь
 
+### Поддержать рублём
+
+RS бесплатный и без рекламы. Если он вам пригодился, можно закинуть на развитие через
+[CloudTips](https://pay.cloudtips.ru/p/befb620d), от 49 ₽. Деньги пойдут на RS и следующие открытые проекты.
+
 ### Сообщить об ошибке
 
 Откройте [issue](https://github.com/biohedge/yamusic-rs/issues/new/choose) и напишите:
@@ -490,11 +500,11 @@ git remote add --no-tags upstream https://github.com/SpolzerMod/yamusic-rs.git
 ```
 
 В чистой ветке `main` загрузите конкретный релиз и слейте его с текущим кодом. Замените
-`v1.1.5` на нужный тег. Так в истории сохраняется связь с апстримом, а локальные теги
+`v1.1.6` на нужный тег. Так в истории сохраняется связь с апстримом, а локальные теги
 остаются тегами релизов форка.
 
 ```bash
-git fetch --no-tags upstream refs/tags/v1.1.5
+git fetch --no-tags upstream refs/tags/v1.1.6
 git merge --no-ff FETCH_HEAD
 ```
 
@@ -561,6 +571,7 @@ This fork ships macOS builds only.
   `~/Library/Application Support/yamusic-rs/log.txt`. Security
   problems go to [Report a vulnerability](https://github.com/biohedge/yamusic-rs/security/advisories/new),
   not to public issues.
+- **Support:** if the app is useful to you, you can [send a tip via CloudTips](https://pay.cloudtips.ru/p/befb620d).
 
 The code is released under the [GNU GPL v3](LICENSE): forks you distribute must stay open source
 under the same license. This project is not affiliated with or endorsed by Yandex. All trademarks

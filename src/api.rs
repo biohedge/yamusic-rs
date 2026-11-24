@@ -7,11 +7,14 @@ use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::Method;
 use serde_json::{json, Value};
 use sha2::Sha256;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::client::{token_allowed, ANDROID_CLIENT, API_BASE as BASE, MP3_SALT, SIGN_KEY};
 
 pub const WAVE: &str = "user:onyourwave";
+/// Срок одного запроса к аудиофайлу. Что не успело скачаться, докачает следующий запрос.
+const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub type Res<T> = Result<T, String>;
 
@@ -92,6 +95,12 @@ pub struct Mood {
 }
 
 impl Track {
+    /// Тот же трек, но не привязанный к строке показанного плейлиста.
+    pub fn detached(mut self) -> Self {
+        self.playlist_slot = None;
+        self
+    }
+
     /// "trackId:albumId" — такой формат ждут лайки и фидбек волны.
     pub fn full_id(&self) -> String {
         match &self.album_id {
@@ -160,9 +169,9 @@ pub struct Collection {
     pub likes_count: u64,
     pub likes_cover: Option<String>,
     pub likes_preview: Vec<Track>,
-    pub top_artists: Vec<TopArtist>,
-    pub playlist_tabs: Vec<(String, Vec<Playlist>)>,
-    pub album_tabs: Vec<(String, Vec<Album>)>,
+    pub top_artists: Arc<[TopArtist]>,
+    pub playlist_tabs: Arc<[(String, Vec<Playlist>)]>,
+    pub album_tabs: Arc<[(String, Vec<Album>)]>,
 }
 
 /// Вайб на колесе «Моей волны».
@@ -172,6 +181,8 @@ pub struct WheelItem {
     pub description: String,
     pub cover: Option<String>,
     pub round: bool,
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    pub control_accent: bool,
     pub seeds: Vec<String>,
     /// Цвет обложки: по его оттенку телефонный клиент красит подложку карточки.
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
@@ -234,8 +245,26 @@ pub struct Lyrics {
 /// Откуда брать следующий пакет волны.
 pub enum WaveSession {
     New,
+    /// Новая «Моя волна» с этими настройками (seeds `setting…`).
+    Tuned(Vec<String>),
     Next(String),
     Clone(String),
+}
+
+/// Группа настроек «Моей волны»: «По характеру», «Под настроение» или «По языку».
+#[derive(Clone, Debug)]
+pub struct WaveSettingGroup {
+    pub name: String,
+    pub options: Vec<WaveSettingOption>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WaveSettingOption {
+    pub name: String,
+    pub seed: String,
+    pub image: Option<String>,
+    /// «Любое»: настройка не задана.
+    pub any: bool,
 }
 
 pub struct Batch {
@@ -309,7 +338,13 @@ fn playlist_entry_track(item: &Value, mut track: Track, revision: Option<u64>, i
 
 fn playlist_remove_index(list: &Value, track: &Track) -> Res<usize> {
     let items = list.get("tracks").and_then(Value::as_array).ok_or("нет списка треков")?;
-    let slot = track.playlist_slot.as_ref().ok_or("Нет ревизии показанного плейлиста. Обновите список")?;
+    let Some(slot) = track.playlist_slot.as_ref() else {
+        // Трек открыт не из этого плейлиста: убираем первое его вхождение.
+        return items
+            .iter()
+            .position(|item| s(item.get("id")).or_else(|| s(item.pointer("/track/id"))).as_ref() == Some(&track.id))
+            .ok_or_else(|| "трека нет в плейлисте".into());
+    };
     if list.get("revision").and_then(Value::as_u64) != Some(slot.revision) {
         return Err("Плейлист изменился. Выберите трек ещё раз после обновления".into());
     }
@@ -331,8 +366,7 @@ fn removal_uses_unfiltered_server_order() {
     let mut changed = list.clone();
     changed["revision"] = json!(13);
     assert!(playlist_remove_index(&changed, &selected).is_err());
-    assert!(playlist_remove_index(&list, &track).is_err());
-
+    assert_eq!(playlist_remove_index(&list, &track), Ok(1));
 }
 
 pub(crate) fn parse_track(v: &Value) -> Option<Track> {
@@ -927,6 +961,10 @@ impl Api {
         Api { http, token: token.trim().to_string() }
     }
 
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
     /// Настройки аккаунта: `aiContentReductionEnabled` и прочее.
     pub fn account_settings(&self) -> Res<Value> {
         self.get("/account/settings", &[])
@@ -1071,19 +1109,26 @@ impl Api {
         v.pointer("/cover/uri").and_then(|u| u.as_str()).map(String::from)
     }
 
-    pub fn collection(&self, uid: &str) -> Res<Collection> {
+    pub fn collection_likes(&self) -> Res<(u64, Vec<Track>)> {
         let likes = self.get_raw("/landing-blocks/collection/playlist-with-likes?count=8")?;
+        let count = likes.pointer("/summary/count").and_then(|c| c.as_u64()).unwrap_or(0);
+        let tracks = likes.get("tracks").and_then(|t| t.as_array()).map(|a| a.iter().filter_map(parse_track).collect()).unwrap_or_default();
+        Ok((count, tracks))
+    }
+
+    pub fn collection(&self, uid: &str) -> Res<Collection> {
+        let (likes_count, likes_preview) = self.collection_likes()?;
         let top = self.get_raw("/personal/top/artists/month?count=5").unwrap_or_default();
         let pls = self.get_raw("/landing-blocks/collection/playlists-liked-and-playlists-created?count=8").unwrap_or_default();
         let albums = self.get_raw("/landing-blocks/collection/albums-liked-and-albums-presaved?count=8").unwrap_or_default();
         let likes_cover = self.likes_cover(uid);
         Ok(Collection {
-            likes_count: likes.pointer("/summary/count").and_then(|c| c.as_u64()).unwrap_or(0),
+            likes_count,
             likes_cover,
-            likes_preview: likes.get("tracks").and_then(|t| t.as_array()).map(|a| a.iter().filter_map(parse_track).collect()).unwrap_or_default(),
+            likes_preview,
             top_artists: top.get("artists").and_then(|a| a.as_array()).map(|a| a.iter().filter_map(parse_top_artist).collect()).unwrap_or_default(),
-            playlist_tabs: tabs(&pls, "playlist", parse_playlist),
-            album_tabs: tabs(&albums, "album", parse_album),
+            playlist_tabs: tabs(&pls, "playlist", parse_playlist).into(),
+            album_tabs: tabs(&albums, "album", parse_album).into(),
         })
     }
 
@@ -1260,6 +1305,7 @@ impl Api {
                             description: str_of(it, "description"),
                             cover: d.pointer("/agent/cover/uri").and_then(|u| u.as_str()).map(String::from),
                             round: d.pointer("/agent/entity/type").and_then(|t| t.as_str()) == Some("artist"),
+                            control_accent: it.get("style").and_then(Value::as_str) == Some("CONTROL_ACCENT"),
                             color: hex_color(d.pointer("/agent/cover/color")),
                             seeds: d
                                 .pointer("/wave/seeds")
@@ -1322,7 +1368,7 @@ impl Api {
     /// перезапуска: сервер заводит новую сессию с историей старой. Если сессия истекла или
     /// её нет, начинается новая.
     pub fn wave_session(&self, station: &str, session: WaveSession, queue: &[String], feedbacks: &[Value]) -> Res<Batch> {
-        match session {
+        match &session {
             WaveSession::Next(id) => {
                 let mut body = json!({ "queue": queue });
                 if !feedbacks.is_empty() {
@@ -1351,11 +1397,14 @@ impl Api {
                     Err(e) => crate::config::log(format!("сессия {id}: {e}, начинаем новую")),
                 }
             }
-            WaveSession::New => {}
+            WaveSession::New | WaveSession::Tuned(_) => {}
         }
         let mut seeds = vec![station.to_string()];
         if station == WAVE {
-            seeds.extend(self.wave_settings());
+            match session {
+                WaveSession::Tuned(settings) => seeds.extend(settings.into_iter().filter(|s| !s.is_empty())),
+                _ => seeds.extend(self.wave_settings()),
+            }
         }
         let mut body = json!({
             "seeds": seeds,
@@ -1390,7 +1439,7 @@ impl Api {
 
     /// Настройки «Моей волны» («По характеру», «Под настроение», «По языку»), выбранные в любом
     /// клиенте: seeds `setting…` последней волны, если это была «Моя волна».
-    fn wave_settings(&self) -> Vec<String> {
+    pub fn wave_settings(&self) -> Vec<String> {
         let v = match self.get("/rotor/wave/last", &[]) {
             Ok(v) => v,
             Err(e) => {
@@ -1409,6 +1458,30 @@ impl Api {
         } else {
             Vec::new()
         }
+    }
+
+    /// Какие настройки есть у «Моей волны»: названия, картинки и seeds приходят с сервера.
+    pub fn wave_setting_groups(&self) -> Res<Vec<WaveSettingGroup>> {
+        let v = self.get("/rotor/wave/settings", &[])?;
+        let all = v.get("settingRestrictions").ok_or("нет settingRestrictions")?;
+        let groups = ["diversity", "moodEnergy", "language"]
+            .iter()
+            .filter_map(|key| all.get(*key))
+            .map(|g| WaveSettingGroup {
+                name: str_of(g, "name"),
+                options: g
+                    .get("possibleValues")
+                    .and_then(|a| a.as_array())
+                    .map(|a| a.iter().map(|o| WaveSettingOption {
+                        name: str_of(o, "name"),
+                        seed: str_of(o, "serializedSeed"),
+                        image: o.get("imageUrl").and_then(|u| u.as_str()).map(String::from),
+                        any: o.get("unspecified").and_then(|u| u.as_bool()).unwrap_or(false),
+                    }).collect())
+                    .unwrap_or_default(),
+            })
+            .collect();
+        Ok(groups)
     }
 
     /// Отправить фидбек сессии (тело из [`session_event`]).
@@ -1542,6 +1615,15 @@ impl Api {
         Ok(v.as_array().map(|a| a.iter().filter_map(parse_playlist).collect()).unwrap_or_default())
     }
 
+    /// Какие из плейлистов `kinds` уже содержат трек: так оригинал ставит галочки в меню.
+    pub fn playlists_with_track(&self, uid: &str, kinds: &[String], track_id: &str) -> Res<Vec<String>> {
+        let v = self.get(&format!("/users/{uid}/playlists"), &[("kinds", kinds.join(",").as_str()), ("rich-tracks", "false")])?;
+        let has = |p: &&Value| {
+            p.get("tracks").and_then(Value::as_array).is_some_and(|ts| ts.iter().any(|t| s(t.get("id")).as_deref() == Some(track_id)))
+        };
+        Ok(v.as_array().map(|a| a.iter().filter(has).filter_map(|p| s(p.get("kind"))).collect()).unwrap_or_default())
+    }
+
     pub fn create_playlist(&self, uid: &str, title: &str) -> Res<Playlist> {
         let v = self.send(
             self.req(Method::POST, &format!("/users/{uid}/playlists/create"))
@@ -1584,7 +1666,7 @@ impl Api {
         let revision = v.get("revision").and_then(Value::as_u64).ok_or("нет ревизии плейлиста")?.to_string();
         let at = playlist_remove_index(&v, t)?;
         let mut item = json!({ "id": t.id });
-        if let Some(a) = t.playlist_slot.as_ref().and_then(|slot| slot.album.as_ref()).or(t.album_id.as_ref()) {
+        if let Some(a) = s(v.pointer(&format!("/tracks/{at}/albumId"))).or_else(|| t.album_id.clone()) {
             item["albumId"] = json!(a);
         }
         let diff = json!([{ "op": "delete", "from": at, "to": at + 1, "tracks": [item] }]).to_string();
@@ -1658,13 +1740,14 @@ impl Api {
 
     // ---------- аудио ----------
 
-    /// Прямая ссылка на аудио: сначала download-info (mp3 до 320), потом get-file-info.
-    pub fn stream_url(&self, track_id: &str) -> Res<String> {
+    /// Прямая ссылка на аудио и его формат («MP3 320»): сначала download-info (mp3 до 320),
+    /// потом get-file-info.
+    pub fn stream_url(&self, track_id: &str) -> Res<(String, String)> {
         match self.stream_url_legacy(track_id) {
             Ok(u) => Ok(u),
             Err(e1) => self
                 .file_info(track_id, "nq", "mp3,aac,he-aac")
-                .map(|(_, u)| u)
+                .map(|(codec, u)| (u, codec.replace("he-", "HE-").to_uppercase()))
                 .map_err(|e2| format!("download-info: {e1}; get-file-info: {e2}")),
         }
     }
@@ -1675,7 +1758,7 @@ impl Api {
         Ok(codec.starts_with("flac").then_some(url))
     }
 
-    fn stream_url_legacy(&self, track_id: &str) -> Res<String> {
+    fn stream_url_legacy(&self, track_id: &str) -> Res<(String, String)> {
         let v = self.get(&format!("/tracks/{track_id}/download-info"), &[])?;
         let arr = v.as_array().ok_or("пустой download-info")?;
         let key = |x: &&Value| {
@@ -1684,7 +1767,7 @@ impl Api {
                 x.get("bitrateInKbps").and_then(|b| b.as_u64()).unwrap_or(0),
             )
         };
-let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == Some("mp3"));
+        let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == Some("mp3"));
         let full = |x: &&Value| !x.get("preview").and_then(|p| p.as_bool()).unwrap_or(false);
         let bitrate = |x: &&Value| x.get("bitrateInKbps").and_then(|b| b.as_u64()).unwrap_or(0);
         let pick = match QUALITY.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1695,6 +1778,11 @@ let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == So
         .or_else(|| mp3().max_by_key(key))
         .or_else(|| arr.iter().max_by_key(key))
         .ok_or("нет вариантов загрузки")?;
+        let codec = pick.get("codec").and_then(|c| c.as_str()).unwrap_or("mp3").to_uppercase();
+        let format = match bitrate(&pick) {
+            0 => codec,
+            kbps => format!("{codec} {kbps}"),
+        };
         let info_url = pick.get("downloadInfoUrl").and_then(|u| u.as_str()).ok_or("нет downloadInfoUrl")?;
         if !reqwest::Url::parse(info_url).is_ok_and(|u| token_allowed(&u)) {
             return Err("download-info: адрес не на сервере Яндекса".into());
@@ -1709,7 +1797,7 @@ let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == So
         let sg = xml_tag(&xml, "s")?;
         let digest = Md5::digest(format!("{MP3_SALT}{}{sg}", path.get(1..).unwrap_or("")).as_bytes());
         let hash: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-        Ok(format!("https://{host}/get-mp3/{hash}/{ts}{path}"))
+        Ok((format!("https://{host}/get-mp3/{hash}/{ts}{path}"), format))
     }
 
     /// Кодек и ссылка из get-file-info.
@@ -1756,10 +1844,19 @@ let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == So
 
     /// Скачать файл целиком (аудио, обложка). Ссылки уже подписаны — без токена.
     /// Ответ без чтения тела: трек дальше качается по кусочкам.
-    pub fn open(&self, url: &str) -> Res<reqwest::blocking::Response> {
-        let resp = self.http.get(url).send().map_err(|e| format!("сеть: {}", crate::config::chain(&e)))?;
+    /// Аудио с байта `from`. Соединение живёт не дольше `STREAM_TIMEOUT`: зависшее
+    /// загрузчик переоткроет с того места, где оборвалось.
+    pub fn open_from(&self, url: &str, from: u64) -> Res<reqwest::blocking::Response> {
+        let mut req = self.http.get(url).timeout(STREAM_TIMEOUT);
+        if from > 0 {
+            req = req.header(reqwest::header::RANGE, format!("bytes={from}-"));
+        }
+        let resp = req.send().map_err(|e| format!("сеть: {}", crate::config::chain(&e)))?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
+        }
+        if from > 0 && resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err("сервер не отдаёт файл с середины".into());
         }
         Ok(resp)
     }

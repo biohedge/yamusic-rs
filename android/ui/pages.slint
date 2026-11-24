@@ -1,5 +1,6 @@
 // Светлые страницы: каждая — список блоков, вид блока задаёт kind.
 
+import { ListView } from "std-widgets.slint";
 import { Icons, Now, Cover, T } from "common.slint";
 import { Prof } from "profile.slint";
 
@@ -63,6 +64,8 @@ export global Pages {
     in-out property <string> query;
     callback card(int, int);
     callback track(int, int);
+    // Блок появился на экране: пора грузить его картинки.
+    callback appeared(int);
     callback more(int);
     callback chip(int, int);
     // Кнопки шапок: блок и номер кнопки.
@@ -335,7 +338,7 @@ component ArtistHead inherits Rectangle {
     in property <PBlock> block;
     in property <Icons> icons;
     callback action(int);
-    height: self.width * 1.39;
+    height: min(self.width * 1.39, 580px);
     clip: true;
     background: root.block.bg;
     Image {
@@ -598,15 +601,16 @@ component Chips inherits Flickable {
     }
 }
 
-// Сетка в две колонки.
+// Сетка обложек.
 component Grid inherits Rectangle {
     in property <[PCard]> cards;
+    in property <int> columns: 2;
     callback clicked(int);
-    property <length> cell: (self.width - 44px) / 2;
-    height: ceil(self.cards.length / 2) * (self.cell + 64px);
+    property <length> cell: (self.width - 32px - (self.columns - 1) * 12px) / self.columns;
+    height: ceil(self.cards.length / self.columns) * (self.cell + 64px);
     for c[i] in root.cards: Rectangle {
-        x: 16px + mod(i, 2) * (root.cell + 12px);
-        y: floor(i / 2) * (root.cell + 64px);
+        x: 16px + mod(i, root.columns) * (root.cell + 12px);
+        y: floor(i / root.columns) * (root.cell + 64px);
         width: root.cell;
         height: root.cell + 56px;
         Cover {
@@ -641,16 +645,17 @@ component Grid inherits Rectangle {
     }
 }
 
-// Концерты: две колонки высоких карточек с датой.
+// Концерты: высокие карточки с датой.
 component ConcertGrid inherits Rectangle {
     in property <[PCard]> cards;
+    in property <int> columns: 2;
     callback clicked(int);
-    property <length> cell: (self.width - 44px) / 2;
+    property <length> cell: (self.width - 32px - (self.columns - 1) * 12px) / self.columns;
     property <length> h: self.cell * 1.4;
-    height: ceil(self.cards.length / 2) * (self.h + 88px);
+    height: ceil(self.cards.length / self.columns) * (self.h + 88px);
     for c[i] in root.cards: Rectangle {
-        x: 16px + mod(i, 2) * (root.cell + 12px);
-        y: floor(i / 2) * (root.h + 88px);
+        x: 16px + mod(i, root.columns) * (root.cell + 12px);
+        y: floor(i / root.columns) * (root.h + 88px);
         width: root.cell;
         height: root.h + 80px;
         Cover {
@@ -713,7 +718,9 @@ component BlockView inherits Rectangle {
     property <bool> has-heading: root.block.title != "" && root.kind != K.artist-head && root.kind != K.album-head && root.kind != K.list-head && root.kind != K.likes-head && root.kind != K.wave && root.kind != K.link && root.kind != K.about && root.kind != K.text && root.kind != K.empty;
     property <length> head-h: root.has-heading ? 56px : 0;
     property <length> top: root.head-h + (root.block.chips.length > 0 && root.kind != K.chips ? 52px : 0);
-    property <length> cell: (root.width - 44px) / 2;
+    property <int> columns: clamp(floor((root.width - 20px) / 160px), 2, 6);
+    property <length> cell: (root.width - 32px - (root.columns - 1) * 12px) / root.columns;
+    property <int> card-rows: ceil(root.block.cards.length / root.columns);
     property <int> pairs: ceil(max(root.block.cards.length, root.block.rows.length) / 2);
     property <length> body:
         root.kind == K.cards ? 198px
@@ -728,22 +735,24 @@ component BlockView inherits Rectangle {
         : root.kind == K.vibes ? 196px
         : root.kind == K.chips ? 52px
         : root.kind == K.wave ? 104px
-        : root.kind == K.concerts ? root.pairs * (root.cell * 1.4 + 88px)
+        : root.kind == K.concerts ? root.card-rows * (root.cell * 1.4 + 88px)
         : root.kind == K.shortcuts ? 112px
         : root.kind == K.link ? 96px
         : root.kind == K.about ? (root.width - 32px) * 0.9 + 32px
         : root.kind == K.tiles ? root.pairs * 92px
         : root.kind == K.suggest ? 72px
-        : root.kind == K.artist-head ? root.width * 1.39
+        : root.kind == K.artist-head ? min(root.width * 1.39, 580px)
         : root.kind == K.list-head ? 436px
         : root.kind == K.play ? 88px
         : root.kind == K.banners ? (root.width - 48px) * 0.6 + 64px
-        : root.kind == K.grid ? root.pairs * (root.cell + 64px)
+        : root.kind == K.grid ? root.card-rows * (root.cell + 64px)
         : root.kind == K.text ? txt.preferred-height + 16px
         : root.kind == K.empty ? 120px
         : root.kind == K.likes-head ? 108px
         : 0;
     height: root.top + root.body;
+    init => { Pages.appeared(root.index); }
+    changed index => { Pages.appeared(root.index); }
 
     if root.has-heading: Heading {
         y: 0;
@@ -1046,6 +1055,7 @@ component BlockView inherits Rectangle {
     }
     if root.kind == K.concerts: ConcertGrid {
         y: root.top;
+        columns: root.columns;
         cards: root.block.cards;
         clicked(i) => { Pages.card(root.index, i); }
     }
@@ -1417,6 +1427,7 @@ component BlockView inherits Rectangle {
     }
     if root.kind == K.grid: Grid {
         y: root.top;
+        columns: root.columns;
         cards: root.block.cards;
         clicked(i) => { Pages.card(root.index, i); }
     }
@@ -1565,43 +1576,48 @@ export component PageView inherits Rectangle {
     property <length> bar-h: 56px;
     TouchArea { }
 
-    flick := Flickable {
+    list := ListView {
         y: root.page.overlay ? 0 : root.bar-y + root.bar-h;
         height: root.height - self.y;
         content-y <=> Pages.scroll;
-        content-width: self.width;
-        content-height: col.preferred-height + root.bottom;
-        col := VerticalLayout {
-            width: flick.width;
-            alignment: start;
-            for b[i] in root.page.blocks: BlockView {
+        mouse-drag-pan-enabled: true;
+        for b[i] in root.page.blocks: Rectangle {
+            height: blk.height + (i == root.page.blocks.length - 1 ? root.bottom : 0);
+            blk := BlockView {
+                x: (parent.width - self.width) / 2;
+                y: 0;
+                width: min(parent.width, 1120px);
                 block: b;
                 index: i;
                 icons: root.icons;
             }
-            if root.page.loading: Text {
-                height: 160px;
-                text: "Загружаем…";
-                color: T.fg.with-alpha(0.40);
-                font-size: 16px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-            if root.page.error != "": Text {
-                height: 160px;
-                text: root.page.error;
-                color: T.fg.with-alpha(0.50);
-                font-size: 15px;
-                wrap: word-wrap;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
         }
+    }
+    if root.page.loading: Text {
+        y: list.y;
+        height: 160px;
+        text: "Загружаем…";
+        color: T.fg.with-alpha(0.40);
+        font-size: 16px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if root.page.error != "": Text {
+        x: 16px;
+        y: list.y;
+        width: root.width - 32px;
+        height: 160px;
+        text: root.page.error;
+        color: T.fg.with-alpha(0.50);
+        font-size: 15px;
+        wrap: word-wrap;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
 
     // Шапка: над фото исполнителя прозрачная, пока страницу не прокрутили.
-    property <length> head-h: root.page.blocks.length > 0 && root.page.blocks[0].kind == K.album-head ? 532px : root.width * 1.39;
-    property <bool> solid: !root.page.overlay || -flick.content-y > root.head-h - root.bar-y - root.bar-h - 40px;
+    property <length> head-h: root.page.blocks.length > 0 && root.page.blocks[0].kind == K.album-head ? 532px : min(root.width * 1.39, 580px);
+    property <bool> solid: !root.page.overlay || -list.content-y > root.head-h - root.bar-y - root.bar-h - 40px;
     Rectangle {
         y: 0;
         height: root.bar-y + root.bar-h;
@@ -1728,7 +1744,9 @@ export component PageView inherits Rectangle {
         }
     }
 
-    if Pages.viewer-open: Rectangle {
+    if Pages.viewer-open: viewer := Rectangle {
+        property <bool> split: root.width >= 600px && root.width > root.height;
+        property <length> art-size: min(root.width - 32px, 520px, max(64px, root.height - (self.split ? 120px : 280px)));
         background: @linear-gradient(180deg, Pages.viewer-bg 0%, Pages.viewer-bg.darker(0.6) 100%);
         TouchArea { }
         Rectangle {
@@ -1750,22 +1768,22 @@ export component PageView inherits Rectangle {
             }
         }
         Image {
-            x: 16px;
-            y: root.bar-y + 80px;
-            width: root.width - 32px;
+            x: viewer.split ? (root.width / 2 - self.width) / 2 : (root.width - self.width) / 2;
+            y: viewer.split ? (root.height - self.height) / 2 : root.bar-y + 64px;
+            width: viewer.art-size;
             height: self.width;
             source: Pages.viewer;
             image-fit: cover;
         }
         VerticalLayout {
-            x: 16px;
-            y: root.bar-y + 96px + root.width - 32px;
-            width: root.width - 32px;
+            x: viewer.split ? root.width / 2 : (root.width - self.width) / 2;
+            y: viewer.split ? (root.height - self.preferred-height) / 2 : root.bar-y + 80px + viewer.art-size;
+            width: viewer.split ? root.width / 2 - 24px : viewer.art-size;
             spacing: 14px;
             alignment: start;
-            Text { text: Pages.viewer-title; color: #fff; font-size: 17px; font-weight: 700; }
-            Text { text: Pages.viewer-artist; color: #ffffff99; font-size: 17px; }
-            Text { text: Pages.viewer-year; color: #fff; font-size: 17px; }
+            Text { text: Pages.viewer-title; color: #fff; font-size: 17px; wrap: word-wrap; font-weight: 700; }
+            Text { text: Pages.viewer-artist; color: #ffffff99; font-size: 17px; wrap: word-wrap; }
+            Text { text: Pages.viewer-year; color: #fff; font-size: 17px; wrap: word-wrap; }
         }
     }
 }

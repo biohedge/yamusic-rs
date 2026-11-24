@@ -466,6 +466,17 @@ export component FullscreenPlayer inherits Rectangle {
     property <bool> side: App.fs-mode != 0;
     property <length> py: (self.height - 510px) / 2;
 
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(e) => {
+            if e.text == Key.Escape {
+                App.fullscreen = false;
+                return accept;
+            }
+            reject
+        }
+    }
+
     // Движение мыши показывает строки текста выше текущей.
     TouchArea {
         changed mouse-x => { if App.fs-mode == 2 { App.lyrics-mouse(); } }
@@ -515,7 +526,6 @@ export component FullscreenPlayer inherits Rectangle {
                 artists: App.artists,
                 duration: App.format-time(App.duration),
                 cover: App.cover,
-                liked: App.liked,
                 explicit: App.track-explicit,
                 available: true,
             };

@@ -9,6 +9,7 @@ use serde_json::Value;
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -174,6 +175,26 @@ struct Entry {
     error: String,
     scroll: f32,
     blocks: Rc<VecModel<PBlock>>,
+    parts: Vec<Part>,
+}
+
+/// Сколько треков в одной части списка: ListView создаёт только видимые части.
+const PART_ROWS: usize = 40;
+
+/// Блок на экране: блок страницы `block` и его треки `rows`. Длинный список треков
+/// режется на части, иначе «Мне нравится» на тысячи треков создаёт все строки сразу.
+struct Part {
+    block: usize,
+    rows: Range<usize>,
+    loaded: bool,
+}
+
+fn parts_of(block: usize, b: &Block) -> Vec<Part> {
+    let n = b.tracks.len();
+    if !matches!(b.kind, TRACKS | NUMBERED) || n <= PART_ROWS {
+        return vec![Part { block, rows: 0..n, loaded: false }];
+    }
+    (0..n).step_by(PART_ROWS).map(|s| Part { block, rows: s..(s + PART_ROWS).min(n), loaded: false }).collect()
 }
 
 struct St {
@@ -217,14 +238,23 @@ pub fn start(ui: &App, api: Arc<Api>, player: Player) {
     let p = ui.global::<Pages>();
     p.on_back(back);
     p.on_open_search(|| push(Key::Search));
-    p.on_card(|b, i| card(b as usize, i as usize));
-    p.on_track(|b, i| track(b as usize, i as usize));
-    p.on_more(|b| more(b as usize));
-    p.on_chip(|b, i| chip(b as usize, i as usize));
-    p.on_action(|b, n| action(b as usize, n));
+    p.on_card(|b, i| card(part(b).0, i as usize));
+    p.on_track(|b, i| {
+        let (b, first) = part(b);
+        track(b, first + i as usize)
+    });
+    p.on_appeared(|b| {
+        with(|s| s.load_part(b as usize));
+    });
+    p.on_more(|b| more(part(b).0));
+    p.on_chip(|b, i| chip(part(b).0, i as usize));
+    p.on_action(|b, n| action(part(b).0, n));
     p.on_search_edited(|t| search_edited(t.to_string(), Duration::from_millis(450)));
     p.on_search_submit(|t| search_edited(t.to_string(), Duration::ZERO));
-    p.on_menu(|b, i| menu(b as usize, i as usize));
+    p.on_menu(|b, i| {
+        let (b, first) = part(b);
+        menu(b, first + i as usize)
+    });
     p.on_menu_action(menu_action);
     p.on_pick(|i| pick(i as usize));
     p.on_pick_artist(|i| {
@@ -316,7 +346,7 @@ impl St {
         self.serial += 1;
         let id = self.serial;
         let cached = self.cache.get(&key).cloned();
-        self.stack.push(Entry { id, key: key.clone(), data: cached.clone(), error: String::new(), scroll: 0.0, blocks: Rc::new(VecModel::default()) });
+        self.stack.push(Entry { id, key: key.clone(), data: cached.clone(), error: String::new(), scroll: 0.0, blocks: Rc::new(VecModel::default()), parts: Vec::new() });
         self.show();
         if cached.is_some() && !matches!(key, Key::Collection | Key::Likes | Key::LikedArtists | Key::Dislikes | Key::Playlists | Key::Albums | Key::History) {
             return;
@@ -373,14 +403,10 @@ impl St {
             }
         }
         let icons = ui.get_icons();
-        let scale = ui.window().scale_factor();
-        let blocks: Vec<PBlock> = e.data.as_ref().map(|d| d.visible().into_iter().map(|b| pblock(b, &icons)).collect()).unwrap_or_default();
+        let visible = e.data.as_ref().map(|d| d.visible()).unwrap_or_default();
+        e.parts = visible.iter().enumerate().flat_map(|(i, b)| parts_of(i, b)).collect();
+        let blocks: Vec<PBlock> = e.parts.iter().map(|p| pblock(visible[p.block], p.rows.clone(), &icons)).collect();
         e.blocks = Rc::new(VecModel::from(blocks));
-        if let Some(d) = &e.data {
-            for (i, b) in d.visible().into_iter().enumerate() {
-                load_block_images(&e.blocks, i, b, scale);
-            }
-        }
         let d = e.data.as_ref();
         pages.set_page(PPage {
             title: d.map(|d| d.title.clone()).unwrap_or_else(|| title_of(&e.key)).into(),
@@ -398,6 +424,22 @@ impl St {
 
     fn top(&self) -> Option<&Entry> {
         self.stack.last()
+    }
+
+    /// Блок страницы и сдвиг его треков для блока на экране.
+    fn part(&self, shown: usize) -> (usize, usize) {
+        self.top().and_then(|e| e.parts.get(shown)).map_or((shown, 0), |p| (p.block, p.rows.start))
+    }
+
+    /// Картинки части грузятся, когда она впервые попала на экран.
+    fn load_part(&mut self, shown: usize) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let scale = ui.window().scale_factor();
+        let Some(e) = self.stack.last_mut() else { return };
+        let Some(p) = e.parts.get_mut(shown).filter(|p| !p.loaded) else { return };
+        let Some(block) = e.data.as_ref().and_then(|d| d.visible().get(p.block).copied()) else { return };
+        p.loaded = true;
+        load_block_images(&e.blocks, shown, block, p.rows.clone(), scale);
     }
 
     fn block(&self, b: usize) -> Option<Block> {
@@ -429,9 +471,11 @@ impl St {
         let icons = ui.get_icons();
         let scale = ui.window().scale_factor();
         let Some(e) = self.stack.last() else { return };
-        let Some(block) = e.data.as_ref().and_then(|d| d.visible().get(b).map(|b| (*b).clone())) else { return };
-        e.blocks.set_row_data(b, pblock(&block, &icons));
-        load_block_images(&e.blocks, b, &block, scale);
+        let Some(block) = e.data.as_ref().and_then(|d| d.visible().get(b).copied()) else { return };
+        for (shown, p) in e.parts.iter().enumerate().filter(|(_, p)| p.block == b) {
+            e.blocks.set_row_data(shown, pblock(block, p.rows.clone(), &icons));
+            load_block_images(&e.blocks, shown, block, p.rows.clone(), scale);
+        }
     }
 }
 
@@ -453,6 +497,12 @@ fn title_of(key: &Key) -> String {
 }
 
 // ---------- клики ----------
+
+/// Блок страницы и сдвиг треков для номера блока на экране.
+fn part(shown: i32) -> (usize, usize) {
+    let shown = shown as usize;
+    with(|s| s.part(shown)).unwrap_or((shown, 0))
+}
 
 fn card(b: usize, i: usize) {
     let target = with(|s| {
@@ -563,7 +613,7 @@ fn menu_action(n: i32) {
         }
         1 => {
             let liked = !player.is_liked(&t.id);
-            player.send(Cmd::LikeTrack(t));
+            player.send(Cmd::LikeTrack(t, None));
             with(|s| {
                 if let Some(ui) = s.ui.upgrade() {
                     ui.global::<Pages>().set_menu_liked(liked);
@@ -822,9 +872,11 @@ fn prow(t: &Track, pos: Option<&String>) -> PRow {
     }
 }
 
-fn pblock(b: &Block, icons: &Icons) -> PBlock {
+/// Блок на экране с треками `rows`; у продолжения длинного списка нет заголовка.
+fn pblock(b: &Block, rows: Range<usize>, icons: &Icons) -> PBlock {
+    let first = rows.start == 0;
     let cards: Vec<PCard> = b.shown_cards().iter().map(|c| pcard(c, icons)).collect();
-    let mut rows: Vec<PRow> = b.tracks.iter().enumerate().map(|(i, t)| prow(t, b.pos.get(i))).collect();
+    let mut rows: Vec<PRow> = rows.map(|i| prow(&b.tracks[i], b.pos.get(i))).collect();
     // В альбоме оригинал подписывает только треки с другим составом исполнителей.
     if b.kind == NUMBERED {
         rows.iter_mut().filter(|r| r.subtitle.as_str() == b.subtitle).for_each(|r| r.subtitle = "".into());
@@ -832,9 +884,9 @@ fn pblock(b: &Block, icons: &Icons) -> PBlock {
     let chips: Vec<SharedString> = b.tabs.iter().map(|t| SharedString::from(t.0.as_str())).collect();
     PBlock {
         kind: b.kind,
-        title: b.title.clone().into(),
+        title: if first { b.title.clone().into() } else { SharedString::default() },
         subtitle: b.subtitle.clone().into(),
-        more: b.more.is_some(),
+        more: first && b.more.is_some(),
         cards: ModelRc::from(Rc::new(VecModel::from(cards))),
         rows: ModelRc::from(Rc::new(VecModel::from(rows))),
         chips: ModelRc::from(Rc::new(VecModel::from(chips))),
@@ -859,7 +911,7 @@ fn card_dp(kind: i32) -> f32 {
     }
 }
 
-fn load_block_images(blocks: &Rc<VecModel<PBlock>>, bi: usize, b: &Block, scale: f32) {
+fn load_block_images(blocks: &Rc<VecModel<PBlock>>, bi: usize, b: &Block, shown_rows: Range<usize>, scale: f32) {
     let Some(pb) = blocks.row_data(bi) else { return };
     let px = |dp: f32| ((dp * scale).round() as u32).clamp(1, 1000);
     IMAGES.with(|images| {
@@ -895,7 +947,7 @@ fn load_block_images(blocks: &Rc<VecModel<PBlock>>, bi: usize, b: &Block, scale:
         }
         let rows = pb.rows.clone();
         let size = px(52.0);
-        for (i, t) in b.tracks.iter().enumerate() {
+        for (i, t) in b.tracks[shown_rows].iter().enumerate() {
             let Some(uri) = &t.cover else { continue };
             let m = rows.clone();
             images.get(&api::pic(uri, size), size, move |img| {

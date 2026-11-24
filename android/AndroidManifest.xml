@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.spolzermod.yamusicrs"
-    android:versionCode="10105"
-    android:versionName="1.1.5">
+    android:versionCode="10106"
+    android:versionName="1.1.6">
 
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -23,12 +23,11 @@
         android:hasCode="true"
         android:requestLegacyExternalStorage="true"
         android:extractNativeLibs="true"
-        android:theme="@android:style/Theme.Black.NoTitleBar">
+        android:theme="@style/App">
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode|density">
             <meta-data android:name="android.app.lib_name" android:value="yamusic" />
             <intent-filter>

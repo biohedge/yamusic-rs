@@ -50,17 +50,19 @@ find android/java "$OUT/gen" -name '*.java' > "$OUT/sources.txt"
 "$BT/zipalign" -p -f 4 "$UNSIGNED" "$OUT/aligned.apk"
 
 APK="$OUT/yamusic-rs-$ABI.apk"
+# Подпись v1 apksigner при minSdk 26 пропускает, а установщики некоторых оболочек без неё пишут «нет сертификата».
+SIGN="--v1-signing-enabled true"
 if [ -n "${ANDROID_KEYSTORE:-}" ]; then
   KS="$OUT/release.keystore"
   echo "$ANDROID_KEYSTORE" | base64 -d > "$KS"
-  "$BT/apksigner" sign --ks "$KS" --ks-pass env:ANDROID_KEYSTORE_PASSWORD --ks-key-alias "$ANDROID_KEY_ALIAS" --out "$APK" "$OUT/aligned.apk"
+  "$BT/apksigner" sign $SIGN --ks "$KS" --ks-pass env:ANDROID_KEYSTORE_PASSWORD --ks-key-alias "$ANDROID_KEY_ALIAS" --out "$APK" "$OUT/aligned.apk"
   rm -f "$KS"
 else
   echo "::warning::Нет ключа выпуска: APK подписан временным ключом, в релиз он не годится"
   KS="$OUT/debug.keystore"
   "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KS" -storepass android -alias debug -keypass android \
     -dname 'CN=Debug' -keyalg RSA -keysize 2048 -validity 30 >/dev/null
-  "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --out "$APK" "$OUT/aligned.apk"
+  "$BT/apksigner" sign $SIGN --ks "$KS" --ks-pass pass:android --out "$APK" "$OUT/aligned.apk"
 fi
 "$BT/apksigner" verify "$APK"
 ls -l "$APK"

@@ -101,7 +101,7 @@ mod keyring {
         }
         let saved = with(|ss| {
             let c = ss.get_default_collection().or_else(|_| ss.get_any_collection())?;
-            c.ensure_unlocked()?;
+            c.unlock()?;
             c.create_item(&label(name), attributes(name), secret.as_bytes(), true, "text/plain")?;
             Ok(())
         });
@@ -117,7 +117,8 @@ mod keyring {
         let secret = with(|ss| {
             let found = ss.search_items(attributes(name))?;
             let Some(item) = found.unlocked.first().or(found.locked.first()) else { return Ok(None) };
-            item.ensure_unlocked()?;
+            // ensure_unlocked только проверяет. KeePassXC отдаёт записи запертыми до Unlock (#81).
+            item.unlock()?;
             Ok(String::from_utf8(item.get_secret()?).ok())
         })??;
         cached(|m| {
@@ -130,7 +131,13 @@ mod keyring {
         let mut known = false;
         cached(|m| known = m.remove(name).is_some());
         if known {
-            with(|ss| ss.search_items(attributes(name))?.unlocked.iter().try_for_each(|i| i.delete()));
+            with(|ss| {
+                let found = ss.search_items(attributes(name))?;
+                found.unlocked.iter().chain(&found.locked).try_for_each(|i| {
+                    i.unlock()?;
+                    i.delete()
+                })
+            });
         }
     }
 }

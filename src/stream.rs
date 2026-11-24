@@ -6,8 +6,14 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
-/// Сколько ждать следующих байтов, прежде чем считать загрузку оборвавшейся.
-const STALL: Duration = Duration::from_secs(30);
+use reqwest::blocking::Response;
+
+/// Сколько ждать следующих байтов, прежде чем считать загрузку оборвавшейся. Дольше, чем
+/// загрузчик тратит на все попытки переподключиться.
+const STALL: Duration = Duration::from_secs(90);
+
+/// Сколько раз подряд переподключаться, если байты после этого так и не пошли.
+const RETRIES: u32 = 4;
 
 #[derive(Default)]
 struct State {
@@ -29,32 +35,46 @@ impl Buf {
         Ok(Buf { file: temp_file()?, state: Mutex::default(), cv: Condvar::new() })
     }
 
-    /// Качает ответ в фоне. Если буфер больше никому не нужен (трек пропустили), загрузка
-    /// останавливается.
-    pub fn download(mut resp: reqwest::blocking::Response) -> Result<Arc<Buf>, String> {
+    /// Качает ответ в фоне. Если соединение оборвалось, `reopen` открывает файл заново с нужного
+    /// байта. Если буфер больше никому не нужен (трек пропустили), загрузка останавливается.
+    pub fn download<F>(mut resp: Response, mut reopen: F) -> Result<Arc<Buf>, String>
+    where
+        F: FnMut(u64) -> Result<Response, String> + Send + 'static,
+    {
         let buf = Arc::new(Buf::new().map_err(|e| format!("временный файл: {e}"))?);
         buf.state.lock().unwrap().len = resp.content_length();
         let b = buf.clone();
         std::thread::spawn(move || {
             let mut chunk = vec![0u8; 64 * 1024];
+            let mut failures = 0;
             loop {
                 if Arc::strong_count(&b) == 1 {
                     return;
                 }
-                let res = resp.read(&mut chunk);
-                if let Err(e) = &res {
-                    if e.kind() == io::ErrorKind::Interrupted {
-                        continue;
-                    }
-                }
                 let have = b.state.lock().unwrap().have;
-                let res = res.and_then(|n| write_at(&b.file, &chunk[..n], have).map(|()| n));
+                let res = match resp.read(&mut chunk) {
+                    Ok(n) => write_at(&b.file, &chunk[..n], have).map(|()| n).map_err(|e| format!("временный файл: {e}")),
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        crate::config::log(format!("загрузка оборвалась на {have} байте: {e}"));
+                        match reconnect(&b, &mut reopen, have, &mut failures) {
+                            Ok(next) => {
+                                resp = next;
+                                continue;
+                            }
+                            Err(()) => Err(format!("сеть: {e}")),
+                        }
+                    }
+                };
                 let mut st = b.state.lock().unwrap();
                 match res {
                     Ok(0) => st.done = true,
-                    Ok(n) => st.have += n as u64,
+                    Ok(n) => {
+                        st.have += n as u64;
+                        failures = 0;
+                    }
                     Err(e) => {
-                        st.err = Some(format!("сеть: {e}"));
+                        st.err = Some(e);
                         st.done = true;
                     }
                 }
@@ -90,6 +110,25 @@ impl Buf {
         }
         Ok(st)
     }
+}
+
+/// Ждёт и переоткрывает загрузку с байта `from`. `Err`, если попытки кончились или трек уже не нужен.
+fn reconnect<F>(buf: &Arc<Buf>, reopen: &mut F, from: u64, failures: &mut u32) -> Result<Response, ()>
+where
+    F: FnMut(u64) -> Result<Response, String>,
+{
+    while *failures < RETRIES {
+        *failures += 1;
+        std::thread::sleep(Duration::from_secs(1 << (*failures - 1)));
+        if Arc::strong_count(buf) == 1 {
+            return Err(());
+        }
+        match reopen(from) {
+            Ok(resp) => return Ok(resp),
+            Err(e) => crate::config::log(format!("докачка с {from} байта: {e}")),
+        }
+    }
+    Err(())
 }
 
 /// Файл исчезает сам, когда его закроют, даже если приложение упадёт.

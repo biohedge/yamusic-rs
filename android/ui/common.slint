@@ -219,7 +219,7 @@ export component TrackRow inherits Rectangle {
     Text {
         x: 92.6px;
         y: 12.8px;
-        width: 251px;
+        width: max(0px, root.width - self.x - 24px);
         text: root.item.title;
         color: root.fg;
         font-size: 17px;
@@ -229,7 +229,7 @@ export component TrackRow inherits Rectangle {
     Text {
         x: 92.6px;
         y: 34.9px;
-        width: 251px;
+        width: max(0px, root.width - self.x - 24px);
         text: root.item.subtitle;
         color: root.fg.transparentize(0.5);
         font-size: 14px;
@@ -246,34 +246,58 @@ export component Sheet inherits Rectangle {
     in property <length> panel-height;
     in property <color> panel-color: T.sheet;
     visible: root.open || panel.y < root.height - 1px;
+    // Насколько шторку утянули пальцем вниз.
+    property <length> drag: swipe.swiping ? max(0px, swipe.current-position.y - swipe.pressed-position.y) : 0px;
 
-    Rectangle {
-        background: root.open ? #00000066 : #00000000;
-        animate background { duration: 250ms; }
-        TouchArea {
-            clicked => { root.open = false; }
+    swipe := SwipeGestureHandler {
+        handle-swipe-down: root.open && list.content-y >= 0;
+        swiped => {
+            if self.current-position.y - self.pressed-position.y > min(120px, panel.height / 4) {
+                root.open = false;
+            }
         }
-    }
-    panel := Rectangle {
-        y: root.open ? root.height - root.panel-height : root.height;
-        animate y {
-            duration: 280ms;
-            easing: ease-out;
-        }
-        width: root.width;
-        height: root.panel-height + 24px;
-        background: root.panel-color;
-        border-top-left-radius: 24px;
-        border-top-right-radius: 24px;
-        TouchArea { }
+
         Rectangle {
-            y: 8px;
-            width: 36px;
-            height: 4px;
-            border-radius: 2px;
-            background: T.fg.with-alpha(0.12);
+            background: root.open ? #00000066 : #00000000;
+            animate background { duration: 250ms; }
+            TouchArea {
+                clicked => { root.open = false; }
+            }
         }
-        @children
+        panel := Rectangle {
+            x: (root.width - self.width) / 2;
+            y: (root.open ? root.height - self.height : root.height) + root.drag;
+            animate y {
+                duration: swipe.swiping ? 0ms : 280ms;
+                easing: ease-out;
+            }
+            width: min(root.width, 520px);
+            height: min(root.panel-height, max(0px, root.height - 24px));
+            background: root.panel-color;
+            border-top-left-radius: 24px;
+            border-top-right-radius: 24px;
+            clip: true;
+            TouchArea { }
+            list := Flickable {
+                content-width: self.width;
+                content-height: max(self.height, root.panel-height);
+                interactive: root.panel-height > self.height;
+                Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: panel.width;
+                    height: root.panel-height;
+                    Rectangle {
+                        y: 8px;
+                        width: 36px;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: T.fg.with-alpha(0.12);
+                    }
+                    @children
+                }
+            }
+        }
     }
 }
 
@@ -316,6 +340,8 @@ export component QualityOption inherits Rectangle {
 export global T {
     in property <string> display-font: "YS Display";
     in property <bool> dark;
+    // Высота статус-бара: окно лежит под ним.
+    in property <length> top: 52px;
     out property <color> bg: root.dark ? #000 : #fff;
     out property <color> fg: root.dark ? #fff : #000;
     out property <color> card: root.dark ? #141414 : #f5f5f5;

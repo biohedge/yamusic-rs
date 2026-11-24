@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+#[derive(Clone)]
 pub struct ListData {
     pub kind: ListKind,
     pub title: String,
@@ -18,6 +19,7 @@ pub struct ListData {
     pub artist: Option<Artist>,
 }
 
+#[derive(Clone)]
 pub enum Data {
     Search(Search),
     Artist(ArtistFull),
@@ -83,6 +85,26 @@ fn evict(st: &mut HashMap<String, Slot>) {
             None => break,
         }
     }
+}
+
+impl Slot {
+    fn edit(&mut self) -> Option<&mut Data> {
+        self.refresh_again |= self.loading;
+        self.data.as_mut()?.as_mut().ok().map(Arc::make_mut)
+    }
+
+    fn reweigh(&mut self) {
+        self.weight = self.data.as_ref().and_then(|r| r.as_ref().ok()).map_or(0, |d| data_weight(d));
+    }
+}
+
+fn set_track_liked(tracks: &mut Vec<Track>, track: &Track, liked: bool) -> bool {
+    match (liked, tracks.iter().position(|t| t.id == track.id)) {
+        (true, None) => tracks.insert(0, track.clone()),
+        (false, Some(i)) => { tracks.remove(i); }
+        _ => return false,
+    }
+    true
 }
 
 type Store = Arc<Mutex<HashMap<String, Slot>>>;
@@ -253,6 +275,62 @@ impl Net {
         self.load(key);
     }
 
+    /// Обновляем «Мне нравится» и коллекцию в том порядке, в каком сервер подтвердил лайки.
+    pub fn like_saved(&self, track: &Track, liked: bool) {
+        let mut store = self.store.lock().unwrap();
+        let keys = ["likes", "collection"];
+        for key in keys {
+            if store.get(key).is_some_and(|s| !s.loading && matches!(s.data, Some(Err(_)))) {
+                store.remove(key);
+            }
+        }
+        let full = match store.get_mut("likes").and_then(Slot::edit) {
+            Some(Data::List(list)) => {
+                let changed = set_track_liked(&mut list.tracks, track, liked);
+                Some((changed, list.tracks.iter().take(8).cloned().collect::<Vec<_>>()))
+            }
+            _ => None,
+        };
+        let mut refill = false;
+        if let Some(Data::Collection(c)) = store.get_mut("collection").and_then(Slot::edit) {
+            let was_visible = c.likes_preview.iter().any(|t| t.id == track.id);
+            let changed = full.as_ref().is_none_or(|(changed, _)| *changed);
+            if liked && !was_visible && changed {
+                c.likes_count += 1;
+            } else if !liked && (changed || was_visible) {
+                c.likes_count = c.likes_count.saturating_sub(1);
+            }
+            if let Some((_, preview)) = full {
+                c.likes_preview = preview;
+            } else {
+                set_track_liked(&mut c.likes_preview, track, liked);
+                c.likes_preview.truncate(8);
+                refill = !liked && (!was_visible || c.likes_preview.len() < c.likes_count.min(8) as usize);
+            }
+        }
+        for key in keys {
+            if let Some(slot) = store.get_mut(key) { slot.reweigh(); }
+        }
+        evict(&mut store);
+        drop(store);
+        (self.notify)();
+        if refill {
+            if let Ok((count, tracks)) = self.api.collection_likes() {
+                let mut store = self.store.lock().unwrap();
+                if let Some(slot) = store.get_mut("collection") {
+                    if let Some(Data::Collection(c)) = slot.edit() {
+                        c.likes_count = count;
+                        c.likes_preview = tracks;
+                        slot.reweigh();
+                    }
+                }
+                evict(&mut store);
+                drop(store);
+                (self.notify)();
+            }
+        }
+    }
+
     fn load(&self, key: &str) {
         let (api, uid, store, notify, key) = (self.api.clone(), self.uid.clone(), self.store.clone(), self.notify.clone(), key.to_string());
         std::thread::spawn(move || loop {
@@ -267,14 +345,14 @@ impl Net {
                 notify();
                 return;
             };
+            if std::mem::take(&mut slot.refresh_again) { continue; }
             match (&slot.data, res) {
                 (Some(Ok(_)), Err(_)) => {}
                 (_, res) => {
-                    slot.weight = res.as_ref().map(|d| data_weight(d)).unwrap_or(0);
                     slot.data = Some(res);
+                    slot.reweigh();
                 }
             }
-            if std::mem::take(&mut slot.refresh_again) { continue; }
             slot.loading = false;
             evict(&mut st);
             drop(st);
@@ -323,6 +401,48 @@ impl Net {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_like_updates_open_and_cached_favorites() {
+        let track = |i: u32| crate::api::parse_track(&serde_json::json!({"id": i, "title": format!("Track {i}")})).unwrap();
+        let tracks: Vec<_> = (1..=12).map(track).collect();
+        let net = Net::new(Api::new(""), "test".into(), Arc::new(|| {}));
+        let slot = |data| Slot { weight: data_weight(&data), data: Some(Ok(Arc::new(data))), loading: false, refresh_again: false, at: Instant::now() };
+        let collection = Collection { likes_count: 12, likes_preview: tracks[..8].to_vec(), ..Default::default() };
+        let list = ListData { kind: ListKind::Likes, title: String::new(), covers: vec![], tracks, playlist: None, album: None, artist: None };
+        {
+            let mut store = net.store.lock().unwrap();
+            store.insert("collection".into(), slot(Data::Collection(collection)));
+            store.insert("likes".into(), slot(Data::List(list)));
+        }
+        let snapshot = |key: &str| net.get(key).unwrap().unwrap();
+        let open = snapshot("likes");
+        for (liked, first, count) in [(true, "99", 13), (true, "99", 13), (false, "1", 12), (false, "1", 12)] {
+            net.like_saved(&track(99), liked);
+            let (list, collection) = (snapshot("likes"), snapshot("collection"));
+            let (Data::List(l), Data::Collection(c)) = (&*list, &*collection) else { panic!("favorites cache") };
+            assert!(!Arc::ptr_eq(&list, &open));
+            assert_eq!(l.tracks.len(), count);
+            assert_eq!(net.store.lock().unwrap()["likes"].weight, data_weight(&list));
+            assert_eq!(c.likes_count, count as u64);
+            assert_eq!(c.likes_preview.len(), 8);
+            assert_eq!(c.likes_preview[0].id, first);
+            assert!(c.likes_preview.iter().zip(&l.tracks).all(|(a, b)| a.id == b.id));
+        }
+        let Data::List(original) = &*open else { unreachable!() };
+        assert_eq!(original.tracks[0].id, "1");
+
+        // Коллекцию уже загрузили, а «Мне нравится» ещё не открывали.
+        net.store.lock().unwrap().remove("likes");
+        net.like_saved(&track(77), true);
+        let preview = snapshot("collection");
+        let Data::Collection(c) = &*preview else { unreachable!() };
+        assert_eq!((c.likes_count, c.likes_preview[0].id.as_str()), (13, "77"));
+        assert!(net.peek("likes").is_none());
+        net.store.lock().unwrap().get_mut("collection").unwrap().loading = true;
+        net.like_saved(&track(78), true);
+        assert!(net.store.lock().unwrap()["collection"].refresh_again);
+    }
 
     #[test]
     fn words() {

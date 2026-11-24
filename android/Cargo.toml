@@ -1,6 +1,6 @@
 [package]
 name = "yamusic-rs-android"
-version = "1.1.5"
+version = "1.1.6"
 edition = "2021"
 rust-version = "1.92"
 license = "GPL-3.0-only"
@@ -17,6 +17,7 @@ crate-type = ["cdylib"]
 slint = { version = "~1.18", default-features = false, features = ["std", "compat-1-2", "backend-android-activity-06", "unstable-fontique-011"] }
 rodio = { version = "0.20", default-features = false, features = ["symphonia-mp3", "symphonia-aac", "symphonia-isomp4"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip"] }
+tungstenite = { version = "0.26", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 md-5 = "0.10"

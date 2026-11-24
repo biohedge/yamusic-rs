@@ -224,11 +224,6 @@ impl Ctx {
     fn hist_like(self: &Rc<Self>, i: usize) {
         let Some(t) = self.history_track(i) else { return };
         self.like(t);
-        let Some(model) = HS.with(|h| h.borrow().model.clone()) else { return };
-        if let Some(mut r) = model.row_data(i) {
-            r.item.liked = !r.item.liked;
-            model.set_row_data(i, r);
-        }
     }
 
     fn hist_open(self: &Rc<Self>, i: usize) {

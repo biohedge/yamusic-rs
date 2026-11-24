@@ -1,7 +1,7 @@
 //! Профиль и настройки.
 
 use crate::api::{self, Api};
-use crate::config::{log, Config};
+use crate::config::{log, Config, CROSSFADE_SECS};
 use crate::player::{Cmd, Player};
 use crate::{eq, original, sys, update, App, Prof, T};
 use slint::{ComponentHandle, Image, Model, ModelRc, SharedPixelBuffer, SharedString, VecModel};
@@ -46,6 +46,8 @@ pub fn bind(ui: &App, player: &Player) {
     apply_theme(ui);
     p.set_kids(!c.allow_explicit);
     p.set_to_end(c.add_to_end);
+    p.set_wave_motion(c.wave_motion);
+    p.set_crossfade(c.crossfade_secs > 0);
     p.set_updates(c.check_updates);
     p.set_eq_on(c.eq_on);
     p.set_eq_preset(c.eq_preset.min(eq::PRESETS.len() - 1) as i32);
@@ -56,6 +58,7 @@ pub fn bind(ui: &App, player: &Player) {
     api::ALLOW_EXPLICIT.store(c.allow_explicit, Relaxed);
     api::ADD_TO_END.store(c.add_to_end, Relaxed);
     player.send(Cmd::AllowExplicit(c.allow_explicit));
+    player.send(Cmd::Crossfade(c.crossfade()));
     player.eq.set(c.eq_on, c.eq_preamp, &c.eq_gains);
     if c.check_updates {
         check_updates(ui);
@@ -76,6 +79,12 @@ pub fn bind(ui: &App, player: &Player) {
         }
         c.allow_explicit = allow;
         c.add_to_end = p.get_to_end();
+        c.wave_motion = p.get_wave_motion();
+        let crossfade = if p.get_crossfade() { CROSSFADE_SECS } else { 0 };
+        if crossfade != c.crossfade_secs {
+            c.crossfade_secs = crossfade;
+            pl.send(Cmd::Crossfade(c.crossfade()));
+        }
         api::ADD_TO_END.store(c.add_to_end, Relaxed);
         if p.get_updates() && !c.check_updates {
             check_updates(&ui);
@@ -143,6 +152,7 @@ pub fn bind(ui: &App, player: &Player) {
             "support" => SUPPORT_CHAT.into(),
             "account" => "https://id.yandex.ru/personal".into(),
             "help" => "https://yandex.ru/support/music-app-android/".into(),
+            "donate" => "https://pay.cloudtips.ru/p/befb620d".into(),
             "terms" => "https://yandex.ru/legal/music_mobile_agreement/".into(),
             "privacy" => "https://yandex.ru/legal/confidential/".into(),
             "recommendations" => "https://music.yandex.ru/legal/recommendations/ru/#music".into(),

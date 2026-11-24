@@ -38,7 +38,7 @@ component HeaderButton inherits Rectangle {
     }
 }
 
-export component ListPage inherits Rectangle {
+component ListContent inherits TouchArea {
     property <bool> album: App.list-kind == "album";
     property <bool> likes: App.list-kind == "likes";
     property <bool> playlist: App.list-kind == "playlist";
@@ -59,17 +59,27 @@ export component ListPage inherits Rectangle {
     property <length> rows-y: album ? buttons-y + 94px : search-y + 57px;
     property <length> row-x: playlist && App.list-own ? pad + 12px : pad;
     property <length> row-h: 56px;
+    // Flickable передаёт нажатие с задержкой, поэтому строку под курсором определяем по координатам.
+    property <int> hovered-row: self.has-hover && self.mouse-x >= row-x && self.mouse-x < self.width - 33px
+        ? floor((self.mouse-y - flick.content-y - rows-y) / row-h) : -1;
 
-    Rectangle {
+    if App.chrome-top > 0px: Rectangle {
         y: -App.chrome-top;
-        height: 340px + App.chrome-top;
-        background: @linear-gradient(180deg, App.list-tint 0%, App.list-tint.with-alpha(0) 100%);
+        height: App.chrome-top;
+        background: App.list-tint;
+        opacity: clamp(1 + flick.content-y / 340px, 0, 1);
     }
 
     flick := Flickable {
         content-height: rows-y + App.tracks.length * row-h + (album && App.list-label != "" ? 80px : 32px);
         property <int> first: max(0, floor((-self.content-y - rows-y) / row-h));
         property <int> shown-rows: min(App.tracks.length - first, ceil(self.height / row-h) + 2);
+
+        Rectangle {
+            y: 0;
+            height: 340px;
+            background: @linear-gradient(180deg, App.list-tint 0%, App.list-tint.with-alpha(0) 100%);
+        }
 
         Cover {
             x: pad;
@@ -399,14 +409,17 @@ export component ListPage inherits Rectangle {
 
         for k in max(0, shown-rows): Rectangle {
             property <int> idx: flick.first + k;
+            property <string> track-id: App.tracks[idx].id;
             x: row-x;
             y: rows-y + idx * row-h;
             width: parent.width - row-x - 33px;
             height: row-h;
             init => { App.request-cover(idx); }
             changed idx => { App.request-cover(idx); }
+            changed track-id => { App.request-cover(idx); }
             if !album: TrackRow {
                 width: parent.width;
+                hot: idx == root.hovered-row;
                 item: App.tracks[idx];
                 block: "list";
                 index: idx;
@@ -418,6 +431,7 @@ export component ListPage inherits Rectangle {
             }
             if album: AlbumTrackRow {
                 width: parent.width;
+                hot: idx == root.hovered-row;
                 item: App.tracks[idx];
                 current: idx == App.list-current;
                 pos: idx + 1;
@@ -437,11 +451,6 @@ export component ListPage inherits Rectangle {
             Text { text: T.t("Лейбл:"); font-size: Theme.font-size-label-s; color: Theme.controls-color-primary-text-enabled; vertical-alignment: center; }
             Text { text: App.list-label; font-size: Theme.font-size-label-s; font-weight: 500; color: Theme.controls-color-primary-text-enabled-variant; vertical-alignment: center; }
         }
-    }
-
-    NavArrows {
-        x: pad;
-        y: 13px;
     }
 
     function edit-title() {
@@ -477,4 +486,9 @@ export component ListPage inherits Rectangle {
         }
         App.list-edit-request = 0;
     }
+}
+
+export component ListPage inherits Rectangle {
+    ListContent { }
+    NavArrows { x: 25px; y: 13px; }
 }

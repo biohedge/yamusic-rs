@@ -70,7 +70,7 @@ pub fn save_track(api: &Api, dir: &std::path::Path, t: &Track, flac: bool) -> Re
                     Err(e) => log(format!("flac {}: {e}", t.id)),
                 }
             }
-            api.stream_url(&t.id)
+            api.stream_url(&t.id).map(|(url, _)| url)
         };
         match url().and_then(|u| api.download_to(&u, &part)) {
             Ok(n) if n > 0 => {

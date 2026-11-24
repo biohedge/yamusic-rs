@@ -95,7 +95,7 @@ if (-not (Test-Path $keystore)) {
     & "$env:JAVA_HOME\bin\keytool.exe" -genkeypair -keystore $keystore -storepass android -alias androiddebugkey -keypass android -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000 | Out-Null
 }
 $apk = "$out\yamusic-rs-$Abi.apk"
-& "$bt\apksigner.bat" sign --ks $keystore --ks-pass pass:android --out $apk $aligned
+& "$bt\apksigner.bat" sign --v1-signing-enabled true --ks $keystore --ks-pass pass:android --out $apk $aligned
 if ($LASTEXITCODE -ne 0) { throw 'apksigner упал' }
 "APK: $apk ({0:N1} МБ)" -f ((Get-Item $apk).Length / 1MB)
 

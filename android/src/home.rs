@@ -74,7 +74,7 @@ impl Home {
         ui.set_wheel(ModelRc::from(model));
         // У оригинала по центру вторая карточка, первая выглядывает слева.
         if items.len() > 1 {
-            ui.set_wheel_offset(-ui.get_wheel_spacing());
+            ui.set_wheel_offset(ui.get_wheel_home());
         }
         self.wheel = items;
     }

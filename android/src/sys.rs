@@ -173,6 +173,23 @@ pub fn night_mode() -> bool {
     .unwrap_or(false)
 }
 
+/// Высота статус-бара в dp.
+pub fn status_bar_height() -> Option<f32> {
+    with_env(|env, activity| {
+        let res = env.call_method(activity, "getResources", "()Landroid/content/res/Resources;", &[])?.l()?;
+        let name = env.new_string("status_bar_height")?;
+        let kind = env.new_string("dimen")?;
+        let package = env.new_string("android")?;
+        let id = env
+            .call_method(&res, "getIdentifier", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)I", &[(&name).into(), (&kind).into(), (&package).into()])?
+            .i()?;
+        let px = env.call_method(&res, "getDimensionPixelSize", "(I)I", &[id.into()])?.i()?;
+        let metrics = env.call_method(&res, "getDisplayMetrics", "()Landroid/util/DisplayMetrics;", &[])?.l()?;
+        let density = env.get_field(&metrics, "density", "F")?.f()?;
+        Ok(px as f32 / density)
+    })
+}
+
 fn java_string(env: &mut JNIEnv, obj: JObject) -> jni::errors::Result<String> {
     Ok(env.get_string(&JString::from(obj))?.into())
 }

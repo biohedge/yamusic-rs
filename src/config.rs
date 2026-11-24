@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::PathBuf;
 
+/// Длина кроссфейда, когда его включают в настройках.
+pub const CROSSFADE_SECS: u32 = 6;
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct Config {
@@ -57,6 +60,10 @@ pub struct Config {
     pub allow_explicit: bool,
     /// Добавлять треки в конец плейлиста, а не в начало.
     pub add_to_end: bool,
+    /// Пятно «Моей волны» движется. Выключено: анимация всё время тратит процессор.
+    pub wave_motion: bool,
+    /// Сколько секунд треки перетекают друг в друга; ноль — без кроссфейда.
+    pub crossfade_secs: u32,
     /// Обычное окно при выходе, в пикселях экрана. На Wayland места окна не узнать.
     pub window_pos: Option<[i32; 2]>,
     pub window_size: Option<[u32; 2]>,
@@ -102,6 +109,8 @@ impl Default for Config {
             check_updates: true,
             allow_explicit: true,
             add_to_end: false,
+            wave_motion: false,
+            crossfade_secs: 0,
             window_pos: None,
             window_size: None,
             window_maximized: false,
@@ -140,6 +149,11 @@ pub fn cache_dir() -> PathBuf {
 }
 
 impl Config {
+    /// Длина кроссфейда.
+    pub fn crossfade(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.crossfade_secs.into())
+    }
+
     pub fn load() -> Self {
         let mut c: Config = std::fs::read_to_string(dir().join("config.json"))
             .ok()

@@ -6,6 +6,7 @@ use chrono::{Datelike, NaiveDate};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
+#[derive(Clone)]
 pub struct Day {
     /// "2026-11-21"
     pub date: String,
@@ -21,6 +22,7 @@ pub enum Kind {
     Other,
 }
 
+#[derive(Clone)]
 pub struct Group {
     pub kind: Kind,
     /// `album:<id>`, `playlist:<uid>:<kind>`, `artist:<id>`, у волны — станция.

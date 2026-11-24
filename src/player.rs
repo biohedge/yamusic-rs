@@ -5,9 +5,10 @@ use crate::ahead::Ahead;
 use crate::api::{Account, Api, Batch, Res, Track, WaveSession, WAVE};
 use crate::config::log;
 use crate::eq::{Eq, EqParams};
+use crate::fade::{Fade, FadeOut};
 use crate::stream::{Buf, Reader};
-use rodio::{Decoder, OutputStream, Sink, Source as _};
-use std::collections::{HashSet, VecDeque};
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source as _};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -76,13 +77,20 @@ pub struct Shared {
     pub source: Source,
     pub upcoming: Vec<Track>,
     pub playing: bool,
+    pub likes_revision: i32,
     pub loading: bool,
     pub position: f32,
+    track_generation: u64,
+    seek_request: u64,
     pub duration: f32,
     pub volume: f32,
     pub repeat: Repeat,
     pub shuffle: bool,
     pub error: Option<(String, Instant)>,
+    /// Трек продолжен с того места, где его оставили в прошлый раз: плеер виден сразу, на паузе.
+    pub resumed: bool,
+    /// Формат играющего файла: «MP3 320», «AAC».
+    pub format: String,
 }
 
 /// Как положение ползунка громкости переводится в усиление.
@@ -107,9 +115,11 @@ pub enum Cmd {
     Seek(f32),
     Volume(f32),
     Loudness(Loudness),
-    LikeTrack(Track),
+    LikeTrack(Track, Option<LikeCompleted>),
     Dislike,
     Wave(Source),
+    /// Заново начать «Мою волну» с настройками (seeds `setting…`).
+    TuneWave(Vec<String>),
     PlayList { source: Source, tracks: Vec<Track>, start: usize, after: After },
     /// Перейти к треку из очереди (индекс в `upcoming`).
     Jump(usize),
@@ -119,19 +129,27 @@ pub enum Cmd {
     Enqueue { track: Track, next: bool },
     /// Переключатель «Треки 18+».
     AllowExplicit(bool),
+    /// Сколько треки перетекают друг в друга; ноль — без кроссфейда.
+    Crossfade(Duration),
+    /// Приложение закрывается: записать в Ynison, где остановились, и ответить.
+    Leave(Sender<()>),
 }
 
 enum Msg {
     Cmd(Cmd),
+    Seek { seconds: f32, track_generation: u64, request: u64 },
     Account(Res<Account>),
-    Likes(Res<Vec<String>>),
+    Likes(String, Res<Vec<String>>),
+    LikeFinished { uid: String, id: String, liked: bool, result: Res<()> },
     Batch { res: Res<Batch>, replace: bool, gen: u64 },
     Audio { gen: u64, res: Res<Audio> },
     Prefetch { id: String, res: Res<Audio> },
+    Resume(Res<Option<Resume>>),
     Error(String),
 }
 
 type Notify = Arc<dyn Fn() + Send + Sync>;
+type LikeCompleted = Box<dyn FnOnce(&Track, bool, &Res<()>) + Send>;
 type Job = Box<dyn FnOnce() + Send>;
 pub type Likes = Arc<Mutex<HashSet<String>>>;
 
@@ -159,6 +177,27 @@ impl Player {
 
     pub fn send(&self, c: Cmd) {
         let _ = self.tx.send(Msg::Cmd(c));
+    }
+
+    /// Перед выходом: дождаться, пока Ynison запишет, где остановились, но не дольше 3 секунд.
+    pub fn leave(&self) {
+        let (done, wait) = mpsc::channel();
+        self.send(Cmd::Leave(done));
+        let _ = wait.recv_timeout(Duration::from_secs(3));
+    }
+
+    /// Сразу запоминаем выбранное время, иначе бегунок на миг вернётся к старой позиции.
+    pub fn seek(&self, seconds: f32) -> Option<f32> {
+        let mut s = self.shared.lock().unwrap();
+        if !seconds.is_finite() || s.loading || s.track.is_none() || s.duration <= 0.0 {
+            return None;
+        }
+        let seconds = seconds.clamp(0.0, s.duration);
+        let request = s.seek_request.wrapping_add(1);
+        self.tx.send(Msg::Seek { seconds, track_generation: s.track_generation, request }).ok()?;
+        s.seek_request = request;
+        s.position = seconds;
+        Some(seconds)
     }
 
     pub fn state(&self) -> Shared {
@@ -263,7 +302,8 @@ fn round3(x: f64) -> f64 {
 }
 
 /// Трек, который качается, и декодер, уже прочитавший его начало.
-type Audio = (Arc<Buf>, Decoder<Reader>);
+/// Скачиваемый трек, его декодер и формат («MP3 320»).
+type Audio = (Arc<Buf>, Decoder<Reader>, String);
 
 /// Имя выхода Windows по умолчанию. На Linux звук идёт в «default», и за сменой устройства
 /// там следит PipeWire или PulseAudio.
@@ -313,14 +353,60 @@ const NO_OUTPUT: &str = "Не найдено аудиоустройство";
 #[cfg(not(windows))]
 const NO_OUTPUT: &str = "Не открылся звуковой выход по умолчанию. Для PipeWire нужен pipewire-alsa";
 
+/// Как часто записывать позицию играющего трека в Ynison.
+const YNISON_EVERY: Duration = Duration::from_secs(60);
+
 /// Сколько позиция может стоять на месте у играющего скачанного трека.
 const STALL_LIMIT: Duration = Duration::from_secs(3);
 
 fn load_track(api: &Api, t: &Track) -> Res<Audio> {
-    let url = api.stream_url(&t.id)?;
-    let buf = Buf::download(api.open(&url)?)?;
+    let (url, format) = api.stream_url(&t.id)?;
+    let (again, id) = (api.clone(), t.id.clone());
+    // Ссылка подписана и живёт недолго, поэтому для докачки берётся новая.
+    let buf = Buf::download(api.open_from(&url, 0)?, move |from| again.open_from(&again.stream_url(&id)?.0, from))?;
     let dec = Decoder::new(buf.reader()).map_err(|e| format!("не удалось декодировать: {e}"))?;
-    Ok((buf, dec))
+    Ok((buf, dec, format))
+}
+
+/// Что последним играло в любом клиенте, уже с треками из API.
+struct Resume {
+    source: Source,
+    tracks: Vec<Track>,
+    index: usize,
+    position: f32,
+}
+
+fn fetch_resume(api: &Api) -> Res<Option<Resume>> {
+    let p = crate::ynison::playing(api.token(), &crate::ynison::device_id())?;
+    let Some(current) = p.track_id() else { return Ok(None) };
+    // Волна дальше подберёт треки сама, из её очереди нужен только текущий.
+    let ids = if p.entity_type == "RADIO" { vec![current.to_string()] } else { p.track_ids.clone() };
+    let tracks = api.tracks(&ids)?;
+    let Some(index) = tracks.iter().position(|t| t.id == current) else { return Ok(None) };
+    let track = &tracks[index];
+    let artist = |id: &str| track.artist_list.iter().find(|a| a.id == id).map(|a| a.name.clone()).unwrap_or_default();
+    let album = |id: &str| if track.album_id.as_deref() == Some(id) { track.album_title.clone() } else { String::new() };
+    let entity = p.entity_id.clone();
+    let source = match p.entity_type.as_str() {
+        "RADIO" if entity == WAVE => Source::Wave,
+        "RADIO" => {
+            let (kind, id) = entity.split_once(':').unwrap_or((entity.as_str(), ""));
+            let (header, title) = match kind {
+                "artist" => ("Моя волна по исполнителю", artist(id)),
+                "album" => ("Моя волна по альбому", album(id)),
+                "track" if id == track.id => ("Моя волна по треку", track.title.clone()),
+                "track" => ("Моя волна по треку", String::new()),
+                "playlist" => ("Моя волна по плейлисту", String::new()),
+                _ => ("Моя волна", String::new()),
+            };
+            Source::Seed { station: entity.clone(), header: header.into(), title }
+        }
+        "PLAYLIST" => Source::List { kind: ListKind::Playlist, title: String::new(), id: entity },
+        "ALBUM" => Source::List { kind: ListKind::Album, title: album(&entity), id: entity },
+        "ARTIST" => Source::List { kind: ListKind::Artist, title: artist(&entity), id: entity },
+        _ => Source::List { kind: ListKind::Tracks, id: String::new(), title: String::new() },
+    };
+    Ok(Some(Resume { source, tracks, index, position: p.progress_ms as f32 / 1000.0 }))
 }
 
 /// Перемешивание без лишних зависимостей (xorshift от времени).
@@ -357,9 +443,18 @@ struct Engine {
     bg: Sender<Job>,
     shared: Arc<Mutex<Shared>>,
     likes: Likes,
+    // Запоминаем и снятые лайки, иначе старый список с сервера может их вернуть.
+    like_writes: HashMap<String, LikeWrite>,
     notify: Notify,
     eq: Arc<EqParams>,
-    audio: Option<(OutputStream, Sink)>,
+    audio: Option<(OutputStream, OutputStreamHandle, Sink)>,
+    /// Затухание играющего трека.
+    fade_out: Arc<FadeOut>,
+    /// Прошлый трек, который затухает под начало нового.
+    fading: Option<Sink>,
+    crossfade: Duration,
+    /// С каким нарастанием начать следующий загруженный трек.
+    fade_in: Duration,
     /// Выход Windows по умолчанию, на котором открыт звук, и когда его последний раз сверяли.
     #[cfg(windows)]
     out_name: Option<String>,
@@ -391,6 +486,13 @@ struct Engine {
     clone_pending: bool,
     /// Последний трек волны с прошлого запуска — queue для клона.
     restore_last: Option<String>,
+    /// Настройки, с которыми начать следующую сессию «Моей волны».
+    tune: Option<Vec<String>>,
+    /// С какой секунды продолжить трек, когда он загрузится.
+    resume_at: Option<(String, f32)>,
+    /// Когда записать состояние в Ynison: правки идут пачкой (перемотка, пауза), пишем одну.
+    ynison_due: Option<Instant>,
+    ynison_at: Instant,
     /// Текущее прослушивание для `/plays`.
     listen: Option<Listen>,
     fetching: bool,
@@ -407,6 +509,12 @@ struct Engine {
     prefetching: Option<String>,
     errors_in_row: u32,
     was_playing: bool,
+    handled_seek: u64,
+}
+
+struct LikeWrite {
+    pending: usize,
+    saved: bool,
 }
 
 impl Engine {
@@ -426,6 +534,7 @@ impl Engine {
             bg,
             shared,
             likes,
+            like_writes: HashMap::new(),
             notify,
             eq,
             audio: None,
@@ -450,6 +559,10 @@ impl Engine {
             played_station: String::new(),
             wave_restored: false,
             clone_pending: false,
+            tune: None,
+            resume_at: None,
+            ynison_due: None,
+            ynison_at: Instant::now(),
             restore_last: None,
             listen: None,
             fetching: false,
@@ -466,6 +579,11 @@ impl Engine {
             prefetching: None,
             errors_in_row: 0,
             was_playing: false,
+            handled_seek: 0,
+            fade_out: Arc::default(),
+            fading: None,
+            crossfade: Duration::ZERO,
+            fade_in: Duration::ZERO,
         }
     }
 
@@ -491,7 +609,7 @@ impl Engine {
     }
 
     fn sink(&self) -> Option<&Sink> {
-        self.audio.as_ref().map(|(_, s)| s)
+        self.audio.as_ref().map(|(_, _, s)| s)
     }
 
     fn ensure_audio(&mut self) -> bool {
@@ -499,7 +617,7 @@ impl Engine {
             match open_output() {
                 Ok((stream, handle)) => match Sink::try_new(&handle) {
                     Ok(sink) => {
-                        self.audio = Some((stream, sink));
+                        self.audio = Some((stream, handle, sink));
                         #[cfg(windows)]
                         {
                             self.out_name = default_output_name();
@@ -520,6 +638,48 @@ impl Engine {
             Loudness::Decibels if v <= 0.0 => 0.0,
             Loudness::Decibels => 10f32.powf((v - 1.0) * 50.0 / 20.0),
         }
+    }
+
+    fn apply_volume(&self) {
+        let gain = self.gain();
+        for s in self.sink().into_iter().chain(&self.fading) {
+            s.set_volume(gain);
+        }
+    }
+
+    /// Источник для звука: эквалайзер, декодирование наперёд и затухание для кроссфейда.
+    fn source(&mut self, src: Decoder<Reader>, fade_in: Duration) -> impl rodio::Source<Item = f32> + Send + 'static {
+        self.fade_out = Arc::default();
+        Fade::new(Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone())), fade_in, self.fade_out.clone())
+    }
+
+    /// Пора ли начать кроссфейд: до конца трека осталось его время и следующий трек уже скачан.
+    fn crossfade_due(&self) -> bool {
+        if self.crossfade.is_zero() || !self.loaded || self.paused || self.fading.is_some() || self.repeat == Repeat::One {
+            return false;
+        }
+        let next_ready = match (self.queue.front(), &self.prefetch) {
+            (Some(next), Some((id, _))) => *id == next.id,
+            _ => false,
+        };
+        let fade = self.crossfade.as_secs_f32();
+        let duration = self.sh().duration;
+        next_ready && duration > 3.0 * fade && duration - self.pos() <= fade
+    }
+
+    /// Прошлый трек уходит в отдельный звуковой поток и затухает, а следующий начинается в новом.
+    fn start_crossfade(&mut self) {
+        let Some((_, handle, sink)) = &mut self.audio else { return };
+        let fresh = match Sink::try_new(handle) {
+            Ok(s) => s,
+            Err(e) => return log(format!("sink: {e}")),
+        };
+        let old = std::mem::replace(sink, fresh);
+        self.fade_out.start(self.crossfade);
+        self.fade_in = self.crossfade;
+        // advance() глушит затухающий поток через stop_audio(), поэтому он отдаётся после.
+        self.advance(End::Finished);
+        self.fading = Some(old);
     }
 
     fn pos(&self) -> f32 {
@@ -569,6 +729,7 @@ impl Engine {
     /// Закрыть выход и продолжить трек с `pos` на новом. Не вышло — пауза до Play с того же места.
     fn reopen_output(&mut self, pos: f32, available: bool) {
         self.audio = None;
+        self.fading = None;
         #[cfg(windows)]
         {
             self.out_name = None;
@@ -596,7 +757,7 @@ impl Engine {
             return false;
         }
         let Ok(src) = Decoder::new(buf.reader()) else { return false };
-        let src = Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone()));
+        let src = self.source(src, Duration::ZERO);
         let (vol, paused) = (self.gain(), self.paused);
         let Some(sink) = self.sink() else { return false };
         sink.pause();
@@ -815,6 +976,7 @@ impl Engine {
         if let Some(s) = self.sink() {
             s.clear();
         }
+        self.fading = None;
         self.loaded = false;
         self.held_pos = None;
     }
@@ -863,7 +1025,9 @@ impl Engine {
         let upcoming: Vec<Track> = self.queue.iter().take(30).cloned().collect();
         let mut s = self.shared.lock().unwrap();
         s.playing = playing;
-        s.position = pos;
+        if s.seek_request == self.handled_seek || s.track.is_none() {
+            s.position = pos;
+        }
         s.volume = self.volume;
         s.repeat = self.repeat;
         s.shuffle = self.shuffle;
@@ -876,11 +1040,25 @@ impl Engine {
         #[cfg(windows)]
         self.check_output();
         self.check_stall();
+        // Пока играет, позиция уходит в Ynison раз в минуту: закроют приложение — потеряется не больше.
+        let playing = self.loaded && !self.paused;
+        if self.ynison_due.is_some_and(|at| Instant::now() >= at) || (playing && self.ynison_at.elapsed() >= YNISON_EVERY) {
+            self.publish();
+        }
         if let Some(at) = self.retry_at {
             if Instant::now() >= at {
                 self.retry_at = None;
                 self.fetch_batch();
             }
+        }
+        if self.fading.as_ref().is_some_and(|s| s.empty()) {
+            self.fading = None;
+        }
+        if self.crossfade_due() {
+            self.start_crossfade();
+            self.sync();
+            (self.notify)();
+            return;
         }
         if self.loaded && !self.paused && self.sink().map(|s| s.empty()).unwrap_or(false) {
             if self.repeat == Repeat::One && self.current_buf.is_some() {
@@ -914,7 +1092,7 @@ impl Engine {
     fn replay(&mut self) -> bool {
         let Some(buf) = self.current_buf.clone() else { return false };
         let Ok(src) = Decoder::new(buf.reader()) else { return false };
-        let src = Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone()));
+        let src = self.source(src, Duration::ZERO);
         if let Some(sink) = self.sink() {
             sink.append(src);
             sink.play();
@@ -925,6 +1103,12 @@ impl Engine {
     fn handle(&mut self, msg: Msg) {
         match msg {
             Msg::Cmd(c) => self.cmd(c),
+            Msg::Seek { seconds, track_generation, request } => {
+                if self.gen == track_generation && self.sh().seek_request == request {
+                    self.cmd(Cmd::Seek(seconds));
+                }
+                self.handled_seek = request;
+            }
             Msg::Account(res) => match res {
                 Ok(acc) => {
                     self.uid = acc.uid.clone();
@@ -937,12 +1121,17 @@ impl Engine {
                         s.error = None;
                     }
                     self.feedback("radioStarted", None, None);
-                    self.fetch_batch();
                     if let Some(api) = self.api.clone() {
                         let tx = self.tx.clone();
+                        // Волну качаем, когда станет ясно, не продолжить ли то, что играло.
+                        let (resume_api, resume_tx) = (api.clone(), tx.clone());
+                        thread::spawn(move || {
+                            let _ = resume_tx.send(Msg::Resume(fetch_resume(&resume_api)));
+                        });
                         let uid = acc.uid;
                         thread::spawn(move || {
-                            let _ = tx.send(Msg::Likes(api.liked_ids(&uid)));
+                            let ids = api.liked_ids(&uid);
+                            let _ = tx.send(Msg::Likes(uid, ids));
                         });
                     }
                 }
@@ -952,10 +1141,33 @@ impl Engine {
                     self.sh().status = Status::Failed(e);
                 }
             },
-            Msg::Likes(res) => match res {
-                Ok(ids) => self.likes.lock().unwrap().extend(ids),
+            Msg::Resume(res) => match res {
+                Ok(Some(r)) if self.paused && self.current.is_none() => self.apply_resume(r),
+                Ok(_) => self.fetch_batch(),
+                Err(e) => {
+                    log(format!("продолжение: {e}"));
+                    self.fetch_batch();
+                }
+            },
+            Msg::Likes(uid, _) if uid != self.uid => {}
+            Msg::Likes(_, res) => match res {
+                Ok(ids) => self.merge_liked_ids(ids),
                 Err(e) => log(format!("likes: {e}")),
             },
+            Msg::LikeFinished { uid, id, liked, result } => {
+                if uid != self.uid { return; }
+                if let Some(write) = self.like_writes.get_mut(&id).filter(|w| w.pending > 0) {
+                    if result.is_ok() { write.saved = liked; }
+                    write.pending -= 1;
+                    if write.pending == 0 {
+                        let mut likes = self.likes.lock().unwrap();
+                        let changed = if write.saved { likes.insert(id) } else { likes.remove(&id) };
+                        drop(likes);
+                        if changed { self.likes_changed(); }
+                    }
+                }
+                if let Err(e) = result { self.error(format!("Лайк не сохранился: {e}")); }
+            }
             Msg::Batch { res, replace, gen } => {
                 if gen != self.batch_gen {
                     return;
@@ -1001,6 +1213,9 @@ impl Engine {
         match c {
             Cmd::Login(token) => {
                 self.reset();
+                self.like_writes.clear();
+                self.likes.lock().unwrap().clear();
+                self.likes_changed();
                 let api = Api::new(&token);
                 self.api = Some(api.clone());
                 {
@@ -1018,14 +1233,26 @@ impl Engine {
                 self.api = None;
                 self.uid.clear();
                 self.likes.lock().unwrap().clear();
+                self.like_writes.clear();
+                self.likes_changed();
                 let mut s = self.sh();
                 s.status = Status::LoggedOut;
                 s.login.clear();
                 s.uid.clear();
             }
             Cmd::Resume => self.resume(),
+            Cmd::Leave(done) => {
+                if let (Some(api), Some(now)) = (self.api.clone(), self.ynison_now()) {
+                    if let Err(e) = crate::ynison::publish(api.token(), &crate::ynison::device_id(), &now) {
+                        log(format!("ynison: {e}"));
+                    }
+                }
+                let _ = done.send(());
+            }
             #[cfg(target_os = "macos")]
-            Cmd::Pause => self.pause(),
+            Cmd::Pause => {
+                if !self.paused { self.pause(); }
+            }
             Cmd::PlayPause if self.paused => self.resume(),
             Cmd::PlayPause => self.pause(),
             Cmd::Next => {
@@ -1039,6 +1266,7 @@ impl Engine {
                 if let Some(l) = &mut self.listen {
                     l.seek = true;
                 }
+                self.fading = None;
                 if self.loaded {
                     if let Some(s) = self.sink() {
                         if let Err(e) = s.try_seek(Duration::from_secs_f32(sec.max(0.0))) {
@@ -1048,20 +1276,17 @@ impl Engine {
                         self.held_pos = Some(sec.max(0.0));
                     }
                 }
+                self.publish_soon();
             }
             Cmd::Volume(v) => {
                 self.volume = v.clamp(0.0, 1.0);
-                if let Some(s) = self.sink() {
-                    s.set_volume(self.gain());
-                }
+                self.apply_volume();
             }
             Cmd::Loudness(l) => {
                 self.loudness = l;
-                if let Some(s) = self.sink() {
-                    s.set_volume(self.gain());
-                }
+                self.apply_volume();
             }
-            Cmd::LikeTrack(t) => self.toggle_like(t),
+            Cmd::LikeTrack(t, saved) => self.toggle_like(t, saved),
             Cmd::Dislike => {
                 if let (Some(api), Some(t)) = (self.api.clone(), self.current.as_ref()) {
                     let id = t.full_id();
@@ -1076,6 +1301,16 @@ impl Engine {
                 self.advance(End::Dislike);
             }
             Cmd::Wave(src) => self.start_wave(src, true),
+            Cmd::TuneWave(settings) => {
+                self.start_wave(Source::Wave, false);
+                self.session.clear();
+                self.clone_pending = false;
+                self.restore_last = None;
+                // Сессию с прошлого запуска уже не подхватывать: волна начинается заново.
+                self.wave_restored = true;
+                self.tune = Some(settings);
+                self.fetch_batch_with(true);
+            }
             Cmd::PlayList { source, tracks, start, after } => {
                 if tracks.is_empty() {
                     return;
@@ -1129,6 +1364,7 @@ impl Engine {
                 }
             }
             Cmd::AllowExplicit(allow) => self.set_allow_explicit(allow),
+            Cmd::Crossfade(over) => self.crossfade = over,
             Cmd::Shuffle(on) => {
                 self.shuffle = on;
                 if self.list.is_some() {
@@ -1149,7 +1385,21 @@ impl Engine {
         }
     }
 
-    fn toggle_like(&mut self, t: Track) {
+    fn likes_changed(&self) {
+        let mut s = self.sh();
+        s.likes_revision = s.likes_revision.wrapping_add(1);
+    }
+
+    fn merge_liked_ids(&self, ids: Vec<String>) {
+        let mut likes = self.likes.lock().unwrap();
+        let before = likes.len();
+        likes.extend(ids.into_iter().filter(|id| !self.like_writes.contains_key(id)));
+        let changed = likes.len() != before;
+        drop(likes);
+        if changed { self.likes_changed(); }
+    }
+
+    fn toggle_like(&mut self, t: Track, done: Option<LikeCompleted>) {
         let Some(api) = self.api.clone() else { return };
         let remove = {
             let mut l = self.likes.lock().unwrap();
@@ -1159,11 +1409,13 @@ impl Engine {
             }
             had
         };
-        let (uid, id, tx) = (self.uid.clone(), t.full_id(), self.tx.clone());
+        self.likes_changed();
+        self.like_writes.entry(t.id.clone()).or_insert(LikeWrite { pending: 0, saved: remove }).pending += 1;
+        let (uid, track, tx) = (self.uid.clone(), t.clone(), self.tx.clone());
         let _ = self.bg.send(Box::new(move || {
-            if let Err(e) = api.like(&uid, &id, remove) {
-                let _ = tx.send(Msg::Error(format!("Лайк не сохранился: {e}")));
-            }
+            let result = api.like(&uid, &track.full_id(), remove);
+            if let Some(done) = done { done(&track, !remove, &result); }
+            let _ = tx.send(Msg::LikeFinished { uid, id: track.id, liked: !remove, result });
         }));
         // Лайк трека из волны оригинал сообщает и самой волне, чтобы она его учла.
         if self.session.is_empty() {
@@ -1213,7 +1465,9 @@ impl Engine {
                 self.restore_wave();
             }
         }
-        let (session, queue) = if self.session.is_empty() {
+        let (session, queue) = if let Some(settings) = self.tune.take() {
+            (WaveSession::Tuned(settings), Vec::new())
+        } else if self.session.is_empty() {
             (WaveSession::New, if replace { Vec::new() } else { self.rotor_queue() })
         } else if self.clone_pending {
             (WaveSession::Clone(self.session.clone()), self.restore_last.clone().into_iter().collect())
@@ -1245,7 +1499,7 @@ impl Engine {
                 self.save_wave();
             }
         }
-        self.likes.lock().unwrap().extend(b.liked);
+        self.merge_liked_ids(b.liked);
         if replace {
             self.queue.clear();
             self.prefetch = None;
@@ -1390,6 +1644,7 @@ impl Engine {
 
     fn resume(&mut self) {
         self.paused = false;
+        self.publish_soon();
         if let Some(pos) = self.held_pos.filter(|_| self.loaded && self.audio.is_none()) {
             if !self.restore_at(pos) {
                 self.paused = true;
@@ -1418,6 +1673,8 @@ impl Engine {
             l.pause = true;
         }
         if let Some(sink) = self.sink() { sink.pause(); }
+        self.fading = None;
+        self.publish_soon();
     }
 
     fn play_from_queue(&mut self) {
@@ -1501,6 +1758,7 @@ impl Engine {
         self.feedback("trackStarted", Some(&t), None);
         {
             let mut s = self.sh();
+            s.track_generation = self.gen;
             s.track = Some(t.clone());
             s.position = 0.0;
             s.duration = t.duration_ms as f32 / 1000.0;
@@ -1550,14 +1808,15 @@ impl Engine {
         });
     }
 
-    fn play_loaded(&mut self, (buf, src): Audio) {
+    fn play_loaded(&mut self, (buf, src, format): Audio) {
         let Some(t) = self.current.clone() else { return };
         if !self.ensure_audio() {
             self.error("Не найдено аудиоустройство");
             self.sh().loading = false;
             return;
         }
-        let src = Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone()));
+        let fade_in = std::mem::take(&mut self.fade_in);
+        let src = self.source(src, fade_in);
         let vol = self.gain();
         let paused = self.paused;
         if let Some(sink) = self.sink() {
@@ -1571,6 +1830,7 @@ impl Engine {
             }
         }
         self.current_buf = Some(buf);
+        self.sh().format = format;
         self.loaded = true;
         self.held_pos = None;
         self.errors_in_row = 0;
@@ -1579,7 +1839,84 @@ impl Engine {
             l.go();
         }
         self.remember_wave(&t);
+        if let Some((id, pos)) = self.resume_at.take() {
+            if id == t.id && pos > 1.0 {
+                self.cmd(Cmd::Seek(pos));
+            }
+        }
+        self.publish_soon();
         self.prefetch_next();
+    }
+
+    fn publish_soon(&mut self) {
+        self.ynison_due = Some(Instant::now() + Duration::from_secs(1));
+    }
+
+    /// Записать в Ynison, что играет: оригинал и следующий запуск продолжат отсюда.
+    fn publish(&mut self) {
+        self.ynison_due = None;
+        self.ynison_at = Instant::now();
+        let (Some(api), Some(now)) = (self.api.clone(), self.ynison_now()) else { return };
+        let _ = self.bg.send(Box::new(move || {
+            if let Err(e) = crate::ynison::publish(api.token(), &crate::ynison::device_id(), &now) {
+                log(format!("ynison: {e}"));
+            }
+        }));
+    }
+
+    fn ynison_now(&self) -> Option<crate::ynison::Now> {
+        let current = self.current.as_ref()?;
+        let (entity_type, entity_id) = match &self.source {
+            Source::Wave => ("RADIO", WAVE.to_string()),
+            Source::Seed { station, .. } => ("RADIO", station.clone()),
+            Source::List { kind: ListKind::Playlist, id, .. } => ("PLAYLIST", id.clone()),
+            Source::List { kind: ListKind::Likes, .. } => ("PLAYLIST", format!("{}:3", self.uid)),
+            Source::List { kind: ListKind::Album, id, .. } => ("ALBUM", id.clone()),
+            Source::List { kind: ListKind::Artist, id, .. } => ("ARTIST", id.clone()),
+            Source::List { kind: ListKind::Tracks, .. } => ("VARIOUS", String::new()),
+        };
+        // У списка — весь список, у волны — текущий трек и то, что уже подобрано дальше.
+        let (tracks, index): (Vec<&Track>, usize) = match &self.list {
+            Some(l) => match l.all.iter().position(|t| t.id == current.id) {
+                Some(i) => (l.all.iter().collect(), i),
+                None => (vec![current], 0),
+            },
+            None => (std::iter::once(current).chain(self.queue.iter().take(20)).collect(), 0),
+        };
+        let playable = |t: &&Track| crate::ynison::Playable {
+            id: t.id.clone(),
+            album_id: t.album_id.clone().unwrap_or_default(),
+            title: t.title.clone(),
+        };
+        Some(crate::ynison::Now {
+            entity_type,
+            entity_id,
+            from: self.play_context().from,
+            tracks: tracks.iter().map(playable).collect(),
+            index,
+            progress_ms: if self.loaded { (self.pos() * 1000.0) as u64 } else { 0 },
+            duration_ms: current.duration_ms,
+            paused: self.paused,
+            session: if self.list.is_none() { self.session.clone() } else { String::new() },
+        })
+    }
+
+    /// Продолжить то, что играло последним в любом клиенте, с той же секунды и на паузе.
+    fn apply_resume(&mut self, r: Resume) {
+        let Some(track) = r.tracks.get(r.index).cloned() else { return };
+        self.resume_at = Some((track.id.clone(), r.position));
+        if r.source.station().is_some() {
+            if r.source != self.source {
+                self.set_source(r.source);
+                self.feedback("radioStarted", None, None);
+            }
+            self.queue.push_back(track);
+            self.play_from_queue();
+            self.fetch_batch();
+        } else {
+            self.cmd(Cmd::PlayList { source: r.source, tracks: r.tracks, start: r.index, after: After::Loop });
+        }
+        self.sh().resumed = true;
     }
 
     // ---------- память волны ----------
@@ -1650,12 +1987,69 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    #[test]
+    fn seek_keeps_latest_position_until_audio_acknowledges_it() {
+        let (tx, rx) = mpsc::channel();
+        let mut e = Engine::new(tx.clone(), Default::default(), Default::default(), Arc::new(|| {}), Default::default());
+        let player = Player { tx, shared: e.shared.clone(), likes: e.likes.clone(), eq: e.eq.clone() };
+        e.loaded = true;
+        e.held_pos = Some(10.0);
+        e.sh().track = crate::api::parse_track(&serde_json::json!({"id": 1, "title": "seek"}));
+        e.sh().duration = 100.0;
+
+        for seconds in [80.0, 20.0] {
+            assert_eq!(player.seek(seconds), Some(seconds));
+            e.sync();
+            assert_eq!(player.state().position, seconds);
+        }
+        e.handle(rx.recv().unwrap());
+        e.sync();
+        assert_eq!(e.held_pos, Some(10.0));
+        assert_eq!(player.state().position, 20.0);
+        e.handle(rx.recv().unwrap());
+        e.sync();
+        assert_eq!(e.held_pos, Some(20.0));
+        e.held_pos = Some(21.0);
+        e.sync();
+        assert_eq!(player.state().position, 21.0);
+
+        player.seek(90.0);
+        e.gen += 1; // Перед обработкой команды начался другой трек.
+        e.held_pos = Some(0.0);
+        e.handle(rx.recv().unwrap());
+        e.sync();
+        assert_eq!(player.state().position, 0.0);
+    }
+
+    #[test]
+    fn queued_likes_keep_the_last_saved_state_on_error() {
+        let mut e = Engine::new(mpsc::channel().0, Default::default(), Default::default(), Arc::new(|| {}), Default::default());
+        let (bg, _jobs) = mpsc::channel();
+        e.bg = bg;
+        e.api = Some(Api::new(""));
+        e.uid = "account".into();
+        let track = crate::api::parse_track(&serde_json::json!({"id": 7, "title": "Track"})).unwrap();
+        let reply = |liked, result| Msg::LikeFinished { uid: "account".into(), id: "7".into(), liked, result };
+        e.toggle_like(track.clone(), None);
+        e.toggle_like(track.clone(), None);
+        e.handle(reply(true, Ok(())));
+        assert!(!e.likes.lock().unwrap().contains("7"));
+        e.handle(reply(false, Err("offline".into())));
+        assert!(e.likes.lock().unwrap().contains("7"));
+        e.toggle_like(track, None);
+        e.handle(reply(false, Ok(())));
+        e.handle(Msg::Likes("account".into(), Ok(vec!["7".into(), "9".into()])));
+        let likes = e.likes.lock().unwrap();
+        assert!(!likes.contains("7"));
+        assert!(likes.contains("9"));
+    }
+
     /// Сетевой тест: ссылка на поток → скачивание → декодирование (без токена — 30-сек превью).
     #[test]
     #[ignore]
     fn stream_and_decode() {
         let api = Api::new("");
-        let url = api.stream_url("57703").expect("stream url");
+        let (url, _) = api.stream_url("57703").expect("stream url");
         let bytes = api.fetch_bytes(&url).expect("download");
         assert!(bytes.len() > 50_000);
         let dec = Decoder::new(Cursor::new(bytes)).expect("decode");
@@ -1672,8 +2066,11 @@ fn media_pause_does_not_resume() {
     engine.paused = false;
     engine.cmd(Cmd::Pause);
     assert!(engine.paused);
+    let publish_after_pause = engine.ynison_due;
+    assert!(publish_after_pause.is_some());
     engine.cmd(Cmd::Pause);
     assert!(engine.paused);
+    assert_eq!(engine.ynison_due, publish_after_pause);
 }
 
 #[cfg(test)]

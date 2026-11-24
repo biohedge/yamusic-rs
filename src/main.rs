@@ -11,6 +11,7 @@ mod client;
 mod config;
 mod discord;
 mod eq;
+mod fade;
 mod flac;
 mod gui;
 mod history;
@@ -26,6 +27,8 @@ mod palette;
 mod player;
 mod save;
 mod secret;
+#[cfg(windows)]
+mod smtc;
 mod stream;
 #[cfg_attr(windows, path = "sys/windows.rs")]
 #[cfg_attr(target_os = "linux", path = "sys/linux.rs")]
@@ -36,6 +39,7 @@ mod tags;
 mod tray;
 mod update;
 mod yandex_id;
+mod ynison;
 
 fn main() -> Result<(), slint::PlatformError> {
     // В release stderr теряется: панику пишем в лог (сообщение + место),
@@ -43,6 +47,8 @@ fn main() -> Result<(), slint::PlatformError> {
     std::panic::set_hook(Box::new(|info| {
         config::log(format!("PANIC: {info}"));
     }));
+    #[cfg(windows)]
+    smtc::register_app_id();
     #[cfg(target_os = "linux")]
     sys::audio_identity();
     // После обновления старая версия ещё закрывается: ждём её до 15 секунд.

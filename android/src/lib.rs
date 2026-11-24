@@ -21,6 +21,8 @@ mod config;
 #[path = "../../src/eq.rs"]
 #[allow(dead_code)]
 mod eq;
+#[path = "../../src/fade.rs"]
+mod fade;
 #[path = "../../src/flac.rs"]
 #[allow(dead_code)]
 mod flac;
@@ -54,6 +56,8 @@ mod tags;
 #[path = "../../src/update.rs"]
 #[allow(dead_code)]
 mod update;
+#[path = "../../src/ynison.rs"]
+mod ynison;
 
 mod blob;
 mod download;
@@ -147,10 +151,21 @@ fn on_lifecycle(event: &slint::android::android_activity::PollEvent<'_>) {
 fn run() -> Result<(), slint::PlatformError> {
     let ui = App::new()?;
     let _ = UI.set(ui.as_weak());
+    if let Some(top) = sys::status_bar_height() {
+        ui.global::<T>().set_top(top);
+    }
     let shader = match original::Apk::open_installed() {
         Some(mut apk) => {
             original::register_fonts(&mut apk);
-            set_icons(&ui, load_icons(|name| apk.icon(name).and_then(|svg| slint::Image::load_from_svg_data(svg.as_bytes()).ok())));
+            // В другой версии оригинала иконку могут переименовать: тогда берём её из веб-версии.
+            let mut sprite = None;
+            set_icons(&ui, load_icons(|name| {
+                apk.icon(name).and_then(|svg| slint::Image::load_from_svg_data(svg.as_bytes()).ok()).or_else(|| {
+                    log(format!("иконки {name} нет в оригинале, берём с music.yandex.ru"));
+                    let sprite = sprite.get_or_insert_with(|| crate::assets::Sprite::load(&mut crate::assets::Source::open()));
+                    web_icon(sprite.as_ref()?, name)
+                })
+            }));
             original::wave_shader(&mut apk)
         }
         None => {
@@ -294,7 +309,7 @@ fn bind_player(ui: &App, player: &Player, sleep: &Rc<RefCell<SleepTimer>>) {
     let p = player.clone();
     now.on_like(move || {
         if let Some(t) = p.state().track {
-            p.send(Cmd::LikeTrack(t));
+            p.send(Cmd::LikeTrack(t, None));
         }
     });
     let p = player.clone();
@@ -589,18 +604,21 @@ fn load_web_assets(ui: &App) {
         log("спрайт иконок music.yandex.ru не скачался");
         return;
     };
+    set_icons(ui, load_icons(|name| web_icon(&sprite, name)));
+}
+
+/// Иконка по имени из оригинала: своя или из спрайта веб-версии.
+fn web_icon(sprite: &crate::assets::Sprite, name: &str) -> Option<slint::Image> {
+    if let Some((_, svg)) = OWN_ICONS.iter().find(|(android, _)| *android == name) {
+        return slint::Image::load_from_svg_data(svg.as_bytes()).ok();
+    }
+    let id = WEB_ICONS.iter().find(|(android, _)| *android == name)?.1;
     let vars = std::collections::HashMap::from([
         ("--ym-logo-color-primary-back", "transparent"),
         ("--ym-logo-text-color", "#fff"),
         ("currentColor", "#fff"),
     ]);
-    set_icons(ui, load_icons(|name| {
-        if let Some((_, svg)) = OWN_ICONS.iter().find(|(android, _)| *android == name) {
-            return slint::Image::load_from_svg_data(svg.as_bytes()).ok();
-        }
-        let id = WEB_ICONS.iter().find(|(android, _)| *android == name)?.1;
-        Some(sprite.image(id, &vars))
-    }));
+    Some(sprite.image(id, &vars))
 }
 
 /// Иконки, для которых в спрайте веб-версии нет похожих.
@@ -723,8 +741,10 @@ fn install_wave(ui: &App, fragment: String, wave: Rc<RefCell<Option<wave_gl::Wav
             let Some(ui) = weak.upgrade() else { return };
             if let Some(w) = wave.borrow_mut().as_mut() {
                 let size = ui.window().size();
-                unsafe { w.draw(size.width, size.height) };
-                if w.animating() {
+                let shift = (ui.get_wave_shift() * ui.window().scale_factor()).round() as i32;
+                let motion = if ui.get_wave_moving() { wave_gl::Motion::Moving } else { wave_gl::Motion::Still };
+                unsafe { w.draw(size.width, size.height, shift, motion) };
+                if w.animating() || motion == wave_gl::Motion::Moving {
                     ui.window().request_redraw();
                 }
             }
