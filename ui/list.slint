@@ -1,9 +1,9 @@
 // Альбом, плейлист и «Мне нравится»: шапка, список треков, редактирование плейлиста.
 
 import { Theme } from "theme.slint";
-import { Icons, Icon, Cover, Shimmer, NavArrows, ExplicitMark, Field, ArtistLinks } from "widgets.slint";
+import { Icons, Icon, Cover, Shimmer, NavArrows, Field, ArtistLinks } from "widgets.slint";
 import { T, App, TrackItem } from "state.slint";
-import { TrackRow } from "rows.slint";
+import { TrackRow, AlbumTrackRow } from "rows.slint";
 
 component HeaderButton inherits Rectangle {
     in property <image> icon;
@@ -416,85 +416,15 @@ export component ListPage inherits Rectangle {
                 like => { App.like-track(idx); }
                 remove => { App.list-remove-track(idx); }
             }
-            if album: Rectangle {
-                property <TrackItem> item: App.tracks[idx];
-                property <bool> current: idx == App.list-current;
-                border-radius: Theme.radius-size-m;
-                property <bool> hot: ta.has-hover || like-ta.has-hover || more-ta.has-hover;
-                background: current || hot ? Theme.controls-color-secondary-default-disabled : transparent;
-                ta := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { App.play-list(idx); } }
-                if hot || current: Icon {
-                    x: 8px;
-                    source: current && App.playing ? Icons.pause-filled-xs : Icons.play-filled-xs;
-                    size: 28px;
-                    colorize: Theme.controls-color-primary-text-enabled;
-                }
-                if !hot && !current: Text {
-                    x: 8px;
-                    width: 28px;
-                    horizontal-alignment: center;
-                    text: idx + 1;
-                    font-size: Theme.font-size-label-m;
-                    color: Theme.controls-color-primary-text-enabled;
-                }
-                HorizontalLayout {
-                    x: 44px;
-                    width: parent.width - 44px - 136px;
-                    height: 20px;
-                    spacing: 4px;
-                    Text {
-                        text: item.title;
-                        overflow: elide;
-                        horizontal-stretch: 0;
-                        vertical-alignment: center;
-                        font-size: Theme.font-size-label-m;
-                        font-weight: 500;
-                        color: current ? Theme.controls-color-primary-text-hovered : Theme.controls-color-primary-text-enabled-variant;
-                    }
-                    if item.version != "": Text {
-                        text: item.version;
-                        horizontal-stretch: 0;
-                        vertical-alignment: center;
-                        font-size: Theme.font-size-label-m;
-                        font-weight: 500;
-                        color: Theme.controls-color-primary-text-enabled;
-                    }
-                    if item.explicit: ExplicitMark { y: 1px; }
-                    Rectangle { horizontal-stretch: 1; }
-                }
-                Rectangle {
-                    x: parent.width - 111px;
-                    width: 40px;
-                    height: 40px;
-                    Icon {
-                        source: item.liked ? Icons.liked-small : Icons.like-small;
-                        size: 20px;
-                        colorize: Theme.controls-color-primary-text-enabled;
-                    }
-                    like-ta := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { App.like-track(idx); } }
-                }
-                Rectangle {
-                    x: parent.width - 40px - 8px;
-                    width: 40px;
-                    height: 40px;
-                    Icon {
-                        visible: hot;
-                        source: Icons.more-small;
-                        size: 20px;
-                        colorize: more-ta.has-hover ? Theme.controls-color-primary-text-enabled-variant : Theme.controls-color-primary-text-enabled;
-                    }
-                    more-ta := TouchArea {
-                        mouse-cursor: MouseCursor.pointer;
-                        clicked => { App.row-menu("list", idx, self.absolute-position.x + 20px, self.absolute-position.y + 40px); }
-                    }
-                }
-                if !hot: Text {
-                    x: parent.width - 18px - self.width;
-                    text: item.duration;
-                    font-size: Theme.font-size-label-m;
-                    font-weight: 500;
-                    color: Theme.controls-color-primary-text-enabled;
-                }
+            if album: AlbumTrackRow {
+                width: parent.width;
+                item: App.tracks[idx];
+                current: idx == App.list-current;
+                pos: idx + 1;
+                block: "list";
+                index: idx;
+                play => { App.play-list(idx); }
+                like => { App.like-track(idx); }
             }
         }
 

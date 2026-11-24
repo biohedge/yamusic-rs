@@ -1,4 +1,4 @@
-# Каждый push и PR: clippy, тесты и universal .app + .dmg для macOS.
+# Каждый push и PR: clippy, тесты и .app + .dmg для macOS на Apple Silicon.
 # Релизы здесь не публикуются: их собирает и загружает tools/release.sh с мака автора,
 # потому что GitHub-раннеры macOS периодически недоступны часами. Тег v* проверяется
 # этой же сборкой.
@@ -13,7 +13,6 @@ on:
 
 jobs:
   macos:
-    # arm64-раннер: universal .app собирается кросс-компиляцией x86_64.
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -29,22 +28,24 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin, x86_64-apple-darwin
           components: clippy
       - uses: Swatinem/rust-cache@v2
 
       - run: cargo clippy --release --all-targets -- -D warnings
       - run: cargo test --release
 
-      - name: Собрать universal .app (arm64 + x86_64) и .dmg
+      - name: Собрать .app и .dmg для Apple Silicon
         env:
-          MACOS_UNIVERSAL: "1"
+          MACOS_UNIVERSAL: "0"
+          MACOS_TARGET: ""
         run: |
+          test "$(uname -m)" = arm64
           tools/make_app.sh
           tools/make_dmg.sh
 
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-dmg
-          path: target/release/yamusic-rs-*.dmg
+          name: macos-arm64-dmg
+          path: target/release/yamusic-rs-*-macos-arm64.dmg
+          if-no-files-found: error
 

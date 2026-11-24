@@ -468,6 +468,7 @@ impl Ctx {
         let (kind, arg) = target.split_once(':').unwrap_or((target, ""));
         match kind {
             "likes" => self.navigate(Page::List, Some("likes".into()), true),
+            "history" => self.navigate(Page::History, None, true),
             "station" => {
                 let src = if arg == crate::api::WAVE { Source::Wave } else { Source::Seed { station: arg.to_string(), header: "Моя волна".into(), title: title.to_string() } };
                 self.player.send(Cmd::Wave(src));

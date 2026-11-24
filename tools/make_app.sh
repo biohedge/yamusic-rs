@@ -11,7 +11,7 @@ if [ "${1:-}" = "--debug" ]; then
 fi
 
 # Сборка бинарника. Три режима:
-#  - MACOS_UNIVERSAL=1 — обе арки (arm64 + x86_64) и lipo в universal (CI: раннер macOS);
+#  - MACOS_UNIVERSAL=1 — обе арки (arm64 + x86_64) и lipo в universal;
 #  - MACOS_TARGET=<triple> — одна кросс-арка;
 #  - иначе — нативно под хост (локальная сборка на Apple Silicon).
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)

@@ -11,8 +11,7 @@ pub struct ListData {
     pub kind: ListKind,
     pub title: String,
     pub covers: Vec<String>,
-    /// Общий буфер треков: store, UI и плеер ссылаются на один Arc без полных копий.
-    pub tracks: Arc<Vec<Track>>,
+    pub tracks: Vec<Track>,
     pub playlist: Option<Playlist>,
     pub album: Option<Album>,
     /// Полный список «Популярных треков» исполнителя.
@@ -29,6 +28,7 @@ pub enum Data {
     Collection(Collection),
     Skeleton(crate::landing::Skeleton),
     Block(crate::landing::LBlock),
+    History(Vec<crate::history::Day>),
 }
 
 struct Slot {
@@ -56,6 +56,7 @@ fn data_weight(d: &Data) -> usize {
         Data::SearchLanding(s) => (s.mixes.len() + s.missed.len() + s.new_playlists.len() + s.history.len()) * CARD + s.chart.len() * TRACK,
         Data::Playlists(p) => p.len() * CARD,
         Data::Lyrics(l) => (l.synced.len() + l.text.len()) * 100,
+        Data::History(days) => days.iter().flat_map(|d| &d.groups).map(|g| CARD + g.tracks.len() * TRACK).sum(),
         Data::Collection(c) => {
             c.likes_preview.len() * TRACK
                 + c.top_artists.len() * CARD
@@ -145,7 +146,7 @@ fn fetch(api: &Api, uid: &str, key: &str) -> Res<Data> {
                 kind: ListKind::Album,
                 title: a.title.clone(),
                 covers: a.cover.iter().cloned().collect(),
-                tracks: Arc::new(tracks),
+                tracks,
                 playlist: None,
                 album: Some(a),
                 artist: None,
@@ -158,7 +159,7 @@ fn fetch(api: &Api, uid: &str, key: &str) -> Res<Data> {
                     kind: ListKind::Playlist,
                     title: p.title.clone(),
                     covers: p.covers.clone(),
-                    tracks: Arc::new(tracks),
+                    tracks,
                     playlist: Some(p),
                     album: None,
                     artist: None,
@@ -170,20 +171,21 @@ fn fetch(api: &Api, uid: &str, key: &str) -> Res<Data> {
                 kind: ListKind::Likes,
                 title: "Мне нравится".into(),
                 covers: api.likes_cover(uid).into_iter().collect(),
-                tracks: Arc::new(tracks),
+                tracks,
                 playlist: None,
                 album: None,
                 artist: None,
             })
         }),
-        "artist-tracks" => {
+        "artist-tracks" | "familiar" => {
             let info = api.get_raw(&format!("/artists/{arg}/info"))?;
             let a = info.get("artist").and_then(crate::api::parse_artist).ok_or("нет данных об исполнителе")?;
+            let familiar = kind == "familiar";
             Ok(Data::List(ListData {
                 kind: ListKind::Artist,
-                title: a.name.clone(),
+                title: if familiar { "Знакомое вам".into() } else { a.name.clone() },
                 covers: a.cover.iter().cloned().collect(),
-                tracks: Arc::new(api.artist_tracks(arg)?),
+                tracks: if familiar { api.artist_familiar(arg)? } else { api.artist_tracks(arg)? },
                 playlist: None,
                 album: None,
                 artist: Some(a),
@@ -192,6 +194,7 @@ fn fetch(api: &Api, uid: &str, key: &str) -> Res<Data> {
         "playlists" => api.playlists(uid).map(Data::Playlists),
         "lyrics" => api.lyrics(arg).map(Data::Lyrics),
         "collection" => api.collection(uid).map(Data::Collection),
+        "history" => crate::history::load(api).map(Data::History),
         "skeleton" => {
             let v = api.get_raw(&format!("/landing/skeleton/{arg}?showWizard=false"))?;
             let tabs = v
@@ -293,7 +296,7 @@ impl Net {
                 let start = start.and_then(|s| tracks.iter().position(|t| t.id == s)).unwrap_or(0);
                 player.send(Cmd::PlayList {
                     source: Source::List { kind: ListKind::Artist, id, title: name },
-                    tracks: Arc::new(tracks),
+                    tracks,
                     start,
                     after: After::Loop,
                 });

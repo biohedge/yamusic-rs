@@ -6,12 +6,13 @@
 
 **Интерфейс официального приложения Яндекс Музыки на Rust: один файл и в 13 раз меньше памяти.**
 
-[![Релиз](https://img.shields.io/github/v/release/rnikitin/yamusic-rs?label=%D1%80%D0%B5%D0%BB%D0%B8%D0%B7&color=ffd60a&labelColor=1c1c1f)](https://github.com/rnikitin/yamusic-rs/releases/latest)
+[![Релиз](https://img.shields.io/github/v/release/biohedge/yamusic-rs?label=%D1%80%D0%B5%D0%BB%D0%B8%D0%B7&color=ffd60a&labelColor=1c1c1f)](https://github.com/biohedge/yamusic-rs/releases/latest)
 ![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-2b2b30?labelColor=1c1c1f)
 ![Linux бета](https://img.shields.io/badge/Linux-%D0%B1%D0%B5%D1%82%D0%B0-2b2b30?labelColor=1c1c1f)
+![Android бета](https://img.shields.io/badge/Android-%D0%B1%D0%B5%D1%82%D0%B0-2b2b30?labelColor=1c1c1f)
 [![GPL-3.0](https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-GPL--3.0-2b2b30?labelColor=1c1c1f)](LICENSE)
 
-[Скачать](https://github.com/rnikitin/yamusic-rs/releases/latest) ·
+[Скачать](https://github.com/biohedge/yamusic-rs/releases/latest) ·
 [Возможности](#возможности) ·
 [Замеры](#замеры) ·
 [Какие системы](#какие-системы-поддерживаются) ·
@@ -34,7 +35,7 @@
 семь процессов и около 850 МБ памяти. **Яндекс Музыка RS** повторяет его интерфейс (те же
 шрифты, цвета, отступы и страницы), но написана на Rust и рисует окно сама, на процессоре.
 В итоге один файл на 26 МБ, один процесс и около 65 МБ памяти. Работает на Windows, а в бете
-и на Linux; в этом форке собирается и публикуется только сборка для macOS.
+на Linux и Android. Этот форк собирает и публикует сборку для macOS.
 
 <div align="center">
 <img src="docs/stats.gif" width="100%" alt="Оперативная память: 852 МБ против 64 МБ. Процессы: 7 против 1. Размер на диске: 356 МБ против 26 МБ">
@@ -49,21 +50,23 @@
 > подписка Плюс, как и в официальном приложении.
 
 > [!NOTE]
-> Это форк для macOS: здесь собирается и публикуется только universal-сборка в `.dmg`.
-> Windows и Linux собирает [оригинальный проект](https://github.com/SpolzerMod/yamusic-rs).
+> Здесь публикуется `.dmg` для Mac с Apple Silicon. Порт macOS основан на
+> [rnikitin/yamusic-rs](https://github.com/rnikitin/yamusic-rs). Сборки для Windows, Linux и Android
+> выпускает [оригинальный проект](https://github.com/SpolzerMod/yamusic-rs).
 
 ## Возможности
 
 <img src="docs/lyrics.gif" width="100%" alt="Полноэкранный плеер RS: обложка слева, справа текст песни прокручивается вместе с треком">
 
 - «Моя волна» с колесом вайбов и настройками «по характеру», «под настроение» и «по языку»,
-  «Для вас и Тренды», «Концерты», «Книги и подкасты», чарт, поиск и коллекция.
+  «Для вас и Тренды», «Концерты», «Книги и подкасты», чарт, поиск, коллекция и история прослушиваний.
 - Страницы исполнителей, альбомов и плейлистов. Свои плейлисты можно переименовывать, менять им
   обложку и описание, удалять из них треки.
 - Полноэкранный плеер с текстом песни, который идёт вместе с треком.
-- Скачивание треков с обложкой и тегами ID3. По умолчанию в `Музыка\Яндекс Музыка`
-  (на Linux в `~/Музыка/Яндекс Музыка`), папку можно сменить в настройках.
-- Эквалайзер на 10 полос, светлая и тёмная тема, русский, английский, узбекский и казахский языки.
+- Скачивание треков, альбомов и плейлистов с обложкой и тегами. В настройках можно выбрать папку
+  и включить скачивание FLAC при наличии lossless.
+- Эквалайзер на 10 полос, логарифмическая громкость, светлая и тёмная тема, русский, английский,
+  узбекский и казахский языки.
 - Автозапуск вместе с системой. На Windows есть трей: если закрыть окно во время игры, музыка
   не остановится.
 - Мини-плеер поверх всех окон: обложка, название и три кнопки. Включается кнопкой рядом
@@ -123,10 +126,10 @@
 
 Скачанные треки лежат в `Музыка\Яндекс Музыка`, их удаляйте по желанию.
 
-### macOS (Apple Silicon и Intel)
+### macOS (Apple Silicon)
 
-1. Скачайте `yamusic-rs-<версия>.dmg` со страницы
-   [последнего релиза](https://github.com/rnikitin/yamusic-rs/releases/latest).
+1. Скачайте `yamusic-rs-<версия>-macos-arm64.dmg` со страницы
+   [последнего релиза](https://github.com/biohedge/yamusic-rs/releases/latest).
 2. Откройте dmg и перетащите `Яндекс Музыка RS.app` в «Программы»: ярлык «Программы» лежит рядом
    в окне тома.
 3. Приложение покажет код. Откройте [ya.ru/device](https://ya.ru/device) на компьютере или телефоне
@@ -134,8 +137,8 @@
 
 Приложение без подписи Apple, поэтому при первом запуске macOS может его заблокировать: нажмите
 на `.app` правой кнопкой → «Открыть» → «Открыть». Из Терминала то же самое делается командой
-`xattr -d com.apple.quarantine "/Applications/Яндекс Музыка RS.app"`. Сборка universal — работает и на
-Apple Silicon (M1 и новее), и на Intel-маках. Трея нет. Автозапуск при входе включается в настройках
+`xattr -d com.apple.quarantine "/Applications/Яндекс Музыка RS.app"`. Сборка работает на
+Apple Silicon (M1 и новее). Автозапуск при входе включается в настройках
 (LaunchAgent, обычное окно).
 
 **Обновление.** Приложение сообщает о новой версии, кнопка «Обновить» открывает страницу релиза:
@@ -157,6 +160,8 @@ Apple Silicon (M1 и новее), и на Intel-маках. Трея нет. А�
 | Fedora, openSUSE | `yamusic-rs-<версия>-1.x86_64.rpm` | `sudo dnf install ./yamusic-rs-*.rpm` или `sudo zypper install ./yamusic-rs-*.rpm` |
 | Любая другая, в том числе Arch | `yamusic-rs-x86_64.AppImage` | `chmod +x yamusic-rs-x86_64.AppImage` и запустить |
 
+Для ARM (Raspberry Pi 4/5, Asahi Linux на Mac с M1/M2 и т. п.) те же файлы с `arm64`/`aarch64` в имени.
+
 AppImage монтирует себя через FUSE. Если пишет `Cannot mount AppImage`, поставьте пакет `fuse3`
 или запускайте с распаковкой: `APPIMAGE_EXTRACT_AND_RUN=1 ./yamusic-rs-x86_64.AppImage`.
 
@@ -171,13 +176,30 @@ AppImage монтирует себя через FUSE. Если пишет `Canno
 и вход лежат в `~/.config/yamusic-rs`, кэш в `~/.cache/yamusic-rs`, токен в связке ключей под
 именем «Яндекс Музыка RS» (его можно удалить в «Паролях и ключах» или в KWallet).
 
+### Android (бета)
+
+1. Скачайте `yamusic-rs-arm64-v8a.apk` со страницы [последнего релиза](https://github.com/SpolzerMod/yamusic-rs/releases/latest)
+   прямо на телефон.
+2. Откройте файл. Android попросит разрешить установку из этого источника (браузера или
+   файлового менеджера): разрешите и установите.
+3. Вход такой же, по коду: откройте [ya.ru/device](https://ya.ru/device) на любом устройстве и введите
+   код с экрана.
+
+Нужен Android 8 или новее на 64-битном процессоре, то есть почти любой телефон последних лет.
+APK весит около 11 МБ. Играет в фоне, управляется из шторки и с экрана блокировки, скачанные
+треки кладёт в `Музыка/Яндекс Музыка`.
+
+**Обновление.** В профиле появится «Доступна версия …». Кнопка скачает новый APK, его нужно
+открыть и установить поверх, вход и настройки сохранятся.
+
 ## Какие системы поддерживаются
 
 | Система | Состояние |
 | --- | --- |
-| **macOS** 12+ (Apple Silicon и Intel) | Сборка этого форка: universal `.dmg` в [релизах](https://github.com/rnikitin/yamusic-rs/releases). Нативный «светофор» и скруглённые углы, медиа-клавиши и «Сейчас играет» в Пункте управления. Трея нет. Автозапуск при входе — в настройках, через LaunchAgent, без трея. |
+| **macOS** 12+ (Apple Silicon) | `.dmg` в [релизах](https://github.com/biohedge/yamusic-rs/releases). Нативный «светофор» и скруглённые углы, медиа-клавиши и «Сейчас играет» в Пункте управления. Автозапуск при входе — в настройках, через LaunchAgent. |
 | **Windows** 10 и 11 x64 | Основная платформа [оригинального проекта](https://github.com/SpolzerMod/yamusic-rs), проверяется каждая версия. В этом форке не собирается. |
-| **Linux** x86_64 | Бета в [оригинальном проекте](https://github.com/SpolzerMod/yamusic-rs). В этом форке не собирается. |
+| **Linux** x86_64 и ARM64 | Бета в [оригинальном проекте](https://github.com/SpolzerMod/yamusic-rs). |
+| **Android** 8+ ARM64 | Бета в [оригинальном проекте](https://github.com/SpolzerMod/yamusic-rs). |
 
 **Нужно ещё:**
 - аккаунт Яндекса. Без Плюса сервер отдаёт только 30-секундные отрывки;
@@ -247,7 +269,7 @@ Get-FileHash .\yamusic-rs.exe -Algorithm SHA256
 Проверить скачанный образ:
 
 ```bash
-shasum -a 256 ~/Downloads/yamusic-rs-<версия>.dmg
+shasum -a 256 ~/Downloads/yamusic-rs-<версия>-macos-arm64.dmg
 ```
 </details>
 
@@ -304,7 +326,7 @@ API Яндекса неофициальный и может меняться б�
 
 ### Сообщить об ошибке
 
-Откройте [issue](https://github.com/rnikitin/yamusic-rs/issues/new/choose) и напишите:
+Откройте [issue](https://github.com/biohedge/yamusic-rs/issues/new/choose) и напишите:
 
 - версию RS из «Настройки → О приложении» и версию системы (на Linux ещё дистрибутив и окружение: GNOME, KDE…);
 - что вы делали, что ожидали увидеть и что получилось;
@@ -326,12 +348,12 @@ API Яндекса неофициальный и может меняться б�
 - обновлялка ставит файл, который не совпадает с релизом;
 - другая программа или другой пользователь компьютера может прочитать токен.
 
-Напишите через [Security → Report a vulnerability](https://github.com/rnikitin/yamusic-rs/security/advisories/new).
+Напишите через [Security → Report a vulnerability](https://github.com/biohedge/yamusic-rs/security/advisories/new).
 Сообщение увидят только владельцы репозитория. Подробнее в [SECURITY.md](SECURITY.md).
 
 Если после обновления приложение перестало запускаться, это тоже срочно, но писать можно
 в обычный issue, в заголовке укажите версию. Пока ждёте исправления, предыдущую версию можно
-скачать со страницы [релизов](https://github.com/rnikitin/yamusic-rs/releases).
+скачать со страницы [релизов](https://github.com/biohedge/yamusic-rs/releases).
 
 ### Прислать код
 
@@ -350,7 +372,7 @@ API Яндекса неофициальный и может меняться б�
 Нужен Rust 1.92 или новее (`rustup update stable`). Дальше на любой системе одинаково:
 
 ```bash
-git clone https://github.com/rnikitin/yamusic-rs
+git clone https://github.com/biohedge/yamusic-rs
 cd yamusic-rs
 cargo build --release
 ```
@@ -398,11 +420,11 @@ sudo pacman -S --needed base-devel alsa-lib fontconfig freetype2 wayland libxkbc
 ```bash
 tools/make_app.sh     # соберёт target/release/Яндекс Музыка RS.app (--debug — отладочный)
 open "target/release/Яндекс Музыка RS.app"
-tools/make_dmg.sh     # target/release/yamusic-rs-<версия>.dmg с ярлыком «Программы»
+tools/make_dmg.sh     # target/release/yamusic-rs-<версия>-macos-arm64.dmg на Apple Silicon
 ```
 
-Для быстрой проверки без бандла подойдёт `cargo run`. Релизная сборка universal
-(Apple Silicon и Intel): `MACOS_UNIVERSAL=1 tools/make_app.sh`. Для кросс-сборки нужен std
+Для быстрой проверки без бандла подойдёт `cargo run`. Для локальной universal-сборки
+можно запустить `MACOS_UNIVERSAL=1 tools/make_app.sh`. Для кросс-сборки нужен std
 под x86_64 (`rustup target add x86_64-apple-darwin`); `rustc` из Homebrew целей rustup
 не видит, поэтому берите тулчейн rustup.
 
@@ -459,23 +481,41 @@ SKIA_BINARIES_URL=file:///путь/к/skia.tar.gz cargo build --release
 установленного оригинала (WOFF переводится в sfnt на лету), а если оригинала нет, скачивает
 с веб-версии. Словари ru/en/uz/kk — это чанки webpack оригинала, ключом служит русская строка.
 
+### Обновление из оригинального проекта
+
+Один раз добавьте оригинальный проект как отдельный remote:
+
+```bash
+git remote add --no-tags upstream https://github.com/SpolzerMod/yamusic-rs.git
+```
+
+В чистой ветке `main` загрузите конкретный релиз и слейте его с текущим кодом. Замените
+`v1.1.5` на нужный тег. Так в истории сохраняется связь с апстримом, а локальные теги
+остаются тегами релизов форка.
+
+```bash
+git fetch --no-tags upstream refs/tags/v1.1.5
+git merge --no-ff FETCH_HEAD
+```
+
 ### Релиз
 
-Релиз собирается локально и загружается одной командой:
+Для публикации настройте remote `fork` на свой репозиторий GitHub. Релиз собирается
+локально и загружается одной командой:
 
 ```bash
 tools/release.sh
 ```
 
-Скрипт проверяет, что дерево чистое и `HEAD` уже в `fork/main`, собирает universal `.app`
-(Apple Silicon и Intel), упаковывает его в `yamusic-rs-<версия>.dmg`, сверяет образ
+Скрипт проверяет, что дерево чистое и `HEAD` уже в `fork/main`, собирает `.app` на Mac с Apple Silicon,
+упаковывает его в `yamusic-rs-<версия>-macos-arm64.dmg`, сверяет образ
 (`hdiutil verify`), создаёт тег `v<версия>` и публикует релиз с dmg и списком изменений.
 Версия берётся из `Cargo.toml`.
 
 GitHub Actions ([`.github/workflows/build.yml`](.github/workflows/build.yml)) на каждый push,
 pull request и тег прогоняет clippy, тесты и сборку `.app` + `.dmg`, но релизы не публикует:
-macOS-раннеры у GitHub периодически недоступны часами. Windows и Linux в этом форке
-не собираются: их сборки публикует оригинальный проект. Встроенная обновлялка ищет последний
+macOS-раннеры у GitHub периодически недоступны часами. Сборки для Windows, Linux и Android
+публикует оригинальный проект. Встроенная обновлялка ищет последний
 релиз на GitHub, а на macOS кнопка «Обновить» открывает страницу релиза.
 
 ## Лицензия
@@ -492,21 +532,23 @@ Copyright © 2026 Spolzer. Код распространяется по лице
 ## English
 
 **Yandex Music RS** is an unofficial Yandex Music client for macOS written in Rust; the original
-project also builds for Windows and Linux. It mirrors the official desktop app closely (same fonts,
+project also builds for Windows, Linux and Android. It mirrors the official desktop app closely (same fonts,
 colours, layout and pages), but instead of Electron it is a single 26 MB executable that renders
 its window on the CPU with Slint and Skia. Running the same scenario, the official app uses about
 850 MB of RAM across 7 processes, and RS uses about 65 MB in one process.
 
 This fork ships macOS builds only.
 
-- **macOS:** download `yamusic-rs-<version>.dmg` from the
-  [latest release](https://github.com/rnikitin/yamusic-rs/releases/latest), open it and drag
-  `Яндекс Музыка RS.app` into Applications. The bundle is universal (Apple Silicon and Intel). It is
+- **macOS:** download `yamusic-rs-<version>-macos-arm64.dmg` from the
+  [latest release](https://github.com/biohedge/yamusic-rs/releases/latest), open it and drag
+  `Яндекс Музыка RS.app` into Applications. The bundle runs on Apple Silicon. It is
   unsigned, so the first launch needs right click → Open. There is no tray icon; launch at login
   can be turned on in settings (LaunchAgent). Sign in with the code shown at [ya.ru/device](https://ya.ru/device).
 - **Windows and Linux:** published by the [original project](https://github.com/SpolzerMod/yamusic-rs):
   `yamusic-rs.exe` for Windows, `.deb` / `.rpm` / AppImage for Linux (beta).
-- **Requirements:** macOS 12+ on Apple Silicon or Intel, a Yandex account, and Yandex Plus for
+- **Android (beta):** `yamusic-rs-arm64-v8a.apk` for Android 8+ from the
+  [original project's release](https://github.com/SpolzerMod/yamusic-rs/releases/latest).
+- **Requirements:** macOS 12+ on Apple Silicon, a Yandex account, and Yandex Plus for
   full-length tracks.
 - **Privacy:** the token is encrypted with Windows DPAPI, kept in the Linux keyring (Secret Service),
   or stored in the config file on macOS (readable only by your user). It is only sent over HTTPS to
@@ -514,10 +556,10 @@ This fork ships macOS builds only.
   and the local Discord client (optional status). There is no telemetry.
 - **Build:** Rust 1.92+ and Xcode Command Line Tools, then `tools/make_app.sh` and `tools/make_dmg.sh`;
   `cargo build --release` builds the bare binary.
-- **Bugs:** open an [issue](https://github.com/rnikitin/yamusic-rs/issues/new/choose) with the app
+- **Bugs:** open an [issue](https://github.com/biohedge/yamusic-rs/issues/new/choose) with the app
   version, your macOS version and the last lines of
   `~/Library/Application Support/yamusic-rs/log.txt`. Security
-  problems go to [Report a vulnerability](https://github.com/rnikitin/yamusic-rs/security/advisories/new),
+  problems go to [Report a vulnerability](https://github.com/biohedge/yamusic-rs/security/advisories/new),
   not to public issues.
 
 The code is released under the [GNU GPL v3](LICENSE): forks you distribute must stay open source

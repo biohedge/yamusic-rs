@@ -1,17 +1,17 @@
 [package]
 name = "yamusic-rs"
-version = "1.1.4"
+version = "1.1.5"
 edition = "2021"
 rust-version = "1.92"
 license = "GPL-3.0-only"
 description = "Яндекс Музыка RS — неофициальный клиент Яндекс Музыки на Rust"
-repository = "https://github.com/rnikitin/yamusic-rs"
+repository = "https://github.com/biohedge/yamusic-rs"
 
 [dependencies]
 skia-safe = { version = "0.153.3", default-features = false }
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "unstable-fontique-011", "unstable-winit-030"] }
-rodio = { version = "0.22", default-features = false, features = ["playback", "symphonia-mp3", "symphonia-aac", "symphonia-isomp4"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip"] }
+rodio = { version = "0.20", default-features = false, features = ["symphonia-mp3", "symphonia-aac", "symphonia-isomp4"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip", "socks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 md-5 = "0.10"
@@ -20,6 +20,7 @@ sha2 = "0.10"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 miniz_oxide = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Win32 нужен только сборке для Windows (окно, трей, DPAPI, автозапуск).
 [target.'cfg(windows)'.dependencies.windows-sys]

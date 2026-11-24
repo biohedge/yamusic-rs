@@ -363,9 +363,23 @@ export component SettingsPage inherits Rectangle {
                 }
             }
             SettingItem {
+                title: T.t("Логарифмическая громкость");
+                desc: T.t("Громкость меняется ровнее на слух, тихие уровни настраиваются точнее");
+                toggle: true;
+                on: App.log-volume;
+                clicked => { App.setting("log-volume"); }
+            }
+            SettingItem {
                 title: T.t("Папка для скачивания");
                 desc: App.download-dir;
                 clicked => { App.setting("download-dir"); }
+            }
+            SettingItem {
+                title: T.t("Скачивать в FLAC");
+                desc: T.t("Без потерь, если у трека есть такая версия. Если нет, скачается MP3");
+                toggle: true;
+                on: App.download-flac;
+                clicked => { App.setting("download-flac"); }
             }
             if App.hidden-blocks != "": SettingItem {
                 title: T.t("Вернуть скрытые блоки");

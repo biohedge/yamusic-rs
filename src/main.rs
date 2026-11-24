@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ahead;
 mod api;
 mod assets;
 mod auth;
@@ -10,8 +11,9 @@ mod client;
 mod config;
 mod discord;
 mod eq;
-mod fade;
+mod flac;
 mod gui;
+mod history;
 mod i18n;
 mod images;
 mod landing;
@@ -22,6 +24,7 @@ mod mpris;
 mod net;
 mod palette;
 mod player;
+mod save;
 mod secret;
 mod stream;
 #[cfg_attr(windows, path = "sys/windows.rs")]

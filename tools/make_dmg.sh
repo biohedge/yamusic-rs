@@ -23,6 +23,10 @@ if [ ! -d "$APP" ]; then
   exit 1
 fi
 
+if [ "$(lipo -archs "$APP/Contents/MacOS/yamusic-rs")" = arm64 ]; then
+  DMG="target/$PROFILE/yamusic-rs-$VERSION-macos-arm64.dmg"
+fi
+
 # Печать бандла проверяем до упаковки: иначе Gatekeeper скажет «damaged» уже у пользователя.
 if ! codesign --verify --strict "$APP" 2>/dev/null; then
   echo "Подпись $APP недействительна — пересоберите его: tools/make_app.sh" >&2

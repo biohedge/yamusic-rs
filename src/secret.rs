@@ -152,6 +152,7 @@ pub fn seal(name: &str, plain: &str) -> Option<String> {
         keyring::store(name, plain).then(|| format!("{IN_KEYRING}{name}"))
     }
     // macOS: связки ключей в этой сборке нет, токен остаётся открытым текстом в config.json.
+    // Android: config.json и так лежит в личной папке приложения, другим приложениям её не прочесть.
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (name, plain);
