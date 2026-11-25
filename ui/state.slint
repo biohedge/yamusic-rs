@@ -3,6 +3,12 @@
 
 export enum Page { wave, search, trends, concerts, nonmusic, collection, list, artist, artists, settings, grid, chart, history }
 
+// Строка окна «Горячие клавиши»: подпись и клавиши по ячейкам («—» — пусто).
+export struct ShortcutItem {
+    title: string,
+    keys: [string],
+}
+
 export struct TrackItem {
     id: string,
     title: string,
@@ -202,6 +208,22 @@ export global App {
     // Подсказка у значка «!»: текст дисклеймера рядом с курсором.
     in property <string> hint-text: "Возрастное ограничение 18+";
     in-out property <bool> hint-open;
+    // Окно «Горячие клавиши».
+    in-out property <bool> shortcuts-open;
+    in property <[ShortcutItem]> shortcuts;
+    // Ячейка, которая ждёт новую клавишу: строка и место в ней. -1 — никакая.
+    in-out property <int> shortcut-row: -1;
+    in-out property <int> shortcut-slot;
+    callback shortcuts-reset();
+    // У поля ввода (`Field`) фокус и где это поле: горячие клавиши в это время не работают,
+    // клик мимо поля снимает с него фокус.
+    in-out property <bool> text-focused;
+    in-out property <length> text-x;
+    in-out property <length> text-y;
+    in-out property <length> text-w;
+    in-out property <length> text-h;
+    // Увеличивается, когда поле должно отдать фокус.
+    in-out property <int> blur-tick;
     in-out property <length> hint-x;
     in-out property <length> hint-y;
     // История переходов, как в браузере.

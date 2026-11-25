@@ -1,7 +1,7 @@
 // Поиск: вкладки «Популярное» и «История», результаты по типам.
 
 import { Theme } from "theme.slint";
-import { Icons, Icon, Cover, Shimmer, NavArrows, Field } from "widgets.slint";
+import { Icons, Icon, Cover, Shimmer, NavArrows, Field, ScrollBar } from "widgets.slint";
 import { T, App, ChartRow } from "state.slint";
 import { TrackRow, BlockHeader, Tab, ChartLine } from "rows.slint";
 import { Shelf, CarouselArrow } from "shelf.slint";
@@ -190,5 +190,13 @@ export component SearchPage inherits Rectangle {
             Tab { text: T.t("Популярное"); selected: App.search-tab == 0; clicked => { App.search-tab = 0; } }
             Tab { text: T.t("История"); selected: App.search-tab == 1; clicked => { App.search-tab = 1; } }
         }
+    }
+    // Полоса — под шапкой: выше неё страница закрыта.
+    ScrollBar {
+        y: header-h - 24px;
+        height: root.height - self.y;
+        content-y <=> flick.content-y;
+        content-height: flick.content-height - self.y;
+        field-focused: field.has-focus;
     }
 }

@@ -14,6 +14,7 @@ import { GridPage } from "grid.slint";
 import { AccountMenu, SettingsPage, LoginScreen } from "account.slint";
 import { FullscreenPlayer } from "fullscreen.slint";
 import { TrackMenu, SoundSettings } from "popups.slint";
+import { ShortcutsModal } from "modals.slint";
 import { T, App, Page, TrackItem, PinItem, CardItem, TopArtistItem, WheelEntry, ChartRow, LyricLine, MenuEntry } from "state.slint";
 import { LandingPage, ChartPage } from "landing.slint";
 import { HistoryPage } from "history.slint";
@@ -213,6 +214,20 @@ export component AppWindow inherits Window {
         height: sound.height;
         rise: 8px;
         sound := SoundSettings { }
+    }
+
+    // «Горячие клавиши»: по центру на затемнённой подложке, клик мимо закрывает.
+    if App.shortcuts-open: Rectangle {
+        background: Theme.background-color-primary-enabled-overlay;
+        TouchArea { clicked => { App.shortcuts-open = false; } }
+    }
+    if App.shortcuts-open: Fade {
+        x: (parent.width - shortcuts.width) / 2;
+        y: (parent.height - shortcuts.height) / 2;
+        width: shortcuts.width;
+        height: shortcuts.height;
+        rise: 8px;
+        shortcuts := ShortcutsModal { }
     }
 
     if App.menu-open: Fade {

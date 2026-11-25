@@ -1,7 +1,7 @@
 // Страница «Коллекция».
 
 import { Theme } from "theme.slint";
-import { Icons, Icon, Cover, Shimmer, NavArrows } from "widgets.slint";
+import { Icons, Icon, Cover, Shimmer, NavArrows, ScrollBar } from "widgets.slint";
 import { T, App, Page, CardItem, TopArtistItem } from "state.slint";
 import { TrackRow, BlockHeader, Tab } from "rows.slint";
 
@@ -49,7 +49,7 @@ component CollectionContent inherits TouchArea {
     // Карточки по 186 px, между ними 16 px. У правого края допускаем 1 px.
     property <int> card-count: max(0, floor((self.width - 2 * pad + 17px) / 202px));
 
-    Flickable {
+    flick := Flickable {
         VerticalLayout {
             padding-left: pad;
             padding-right: pad;
@@ -270,6 +270,10 @@ component CollectionContent inherits TouchArea {
                 }
             }
         }
+    }
+    ScrollBar {
+        content-y <=> flick.content-y;
+        content-height: flick.content-height;
     }
 }
 

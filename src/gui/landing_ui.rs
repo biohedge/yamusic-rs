@@ -563,6 +563,13 @@ impl Ctx {
         if let Some(t) = &blk.target {
             return self.open_target(t, &def.title);
         }
+        // Новые релизы — как у оригинала: «Смотреть всё» берёт их из `entities` блока (до 100, с обложками
+        // альбомов). В самом блоке их всего восемь, и на обложке там фото исполнителя.
+        if matches!(def.kind.as_str(), "NEW_RELEASES" | "EDITORIAL_NEW_RELEASES") {
+            let key = format!("entities:{}", def.id);
+            self.st.borrow_mut().grid_titles.insert(key.clone(), def.title.clone());
+            return self.navigate(Page::Grid, Some(key), true);
+        }
         // «Смотреть всё»: карточки блока сеткой.
         let cards: Vec<Card> = LS.with(|l| l.borrow().cards.get(b).cloned()).unwrap_or_default()
             .into_iter()

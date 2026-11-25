@@ -174,13 +174,14 @@ export component PlayerBar inherits Rectangle {
             TransportButton { x: c - 80px; y: 18px; width: 44px; height: 44px; icon: Icons.prev-small; icon-size: 20px; enabled: on && App.can-prev; clicked => { App.prev(); } }
             BarPlayButton { x: c - 32px; y: 20px; }
             TransportButton { x: c + 12px; y: 18px; width: 44px; height: 44px; icon: Icons.next-small; icon-size: 20px; enabled: on; clicked => { App.next(); } }
-            TransportButton { x: c + 72px; y: 24px; icon: App.repeat == 2 ? Icons.repeat-one : Icons.repeat; enabled: on && !App.is-wave; active: App.repeat > 0; ink-hover: self.ink; clicked => { App.cycle-repeat(); } }
+            TransportButton { x: c + 72px; y: 24px; icon: App.repeat == 2 ? Icons.repeat-one : Icons.repeat; enabled: on; active: App.repeat > 0; ink-hover: self.ink; clicked => { App.cycle-repeat(); } }
             BarButton { x: c + 120px; y: 18px; width: 44px; height: 44px; icon: App.liked ? Icons.liked : Icons.like; enabled: on; clicked => { App.like(); } }
 
+            // По высоте кнопок справа (y 24, 32 px), чтобы надпись стояла на их середине.
             if on && App.track-format != "": Text {
                 x: parent.width - 201px - self.width;
-                y: 28px;
-                height: 16px;
+                y: 24px;
+                height: 32px;
                 text: App.track-format;
                 vertical-alignment: center;
                 font-size: Theme.font-size-label-s;

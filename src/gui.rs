@@ -3,6 +3,7 @@
 slint::include_modules!();
 
 mod history_ui;
+mod keys;
 mod landing_ui;
 
 use crate::save::{file_name_max, save_track, saved_already};
@@ -85,7 +86,8 @@ struct State {
     trailer: Option<Trailer>,
     /// Настройки «Моей волны» с сервера, выбранный вариант в каждой группе и картинки вариантов.
     wave_tune: Vec<(crate::api::WaveSettingGroup, usize, Vec<Image>)>,
-    downloading: bool,
+    /// Идущее скачивание списка: папка (она же название списка) и флаг отмены.
+    download: Option<(String, Arc<AtomicBool>)>,
 }
 
 /// Трейлер: треки звучат по 12,5 с с середины, потом следующий.
@@ -449,6 +451,8 @@ impl Ctx {
         };
         let ui = self.ui();
         let app = ui.global::<App>();
+        // Поле ввода старой страницы исчезает вместе с ней и о потере фокуса не сообщает.
+        app.set_text_focused(false);
         let from = app.get_page();
         if remember {
             let cur = self.here();
@@ -566,10 +570,12 @@ impl Ctx {
             let res = match block {
                 "playlists" => net.api.collection_tabs("playlists-liked-and-playlists-created"),
                 "albums" => net.api.collection_tabs("albums-liked-and-albums-presaved"),
-                "ar-studio" => one(net.api.artist_albums(arg, "direct-albums", "year")),
-                "ar-albums" => one(net.api.artist_albums(arg, "direct-albums", "rating")),
-                "ar-compilations" => one(net.api.artist_albums(arg, "also-albums", "rating")),
+                // Как у оригинала: «Студийные альбомы» ведут на discography-albums, а не на все альбомы.
+                "ar-studio" => one(net.api.artist_albums(arg, "discography-albums")),
+                "ar-albums" => one(net.api.artist_albums(arg, "direct-albums")),
+                "ar-compilations" => one(net.api.artist_albums(arg, "also-albums")),
                 "ar-similar" => one(net.api.similar_artists(arg)),
+                "entities" => one(net.api.block_entities(arg)),
                 _ => Ok(vec![(String::new(), cached)]),
             };
             let _ = slint::invoke_from_event_loop(move || {
@@ -1829,6 +1835,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     app.set_translations(crate::i18n::available());
     app.set_download_dir(music_dir(&cfg).display().to_string().into());
     app.set_download_flac(cfg.download_flac);
+    keys::init(&app, &cfg.hotkeys);
     app.set_log_volume(cfg.log_volume);
     app.set_wave_motion(cfg.wave_motion);
     app.set_crossfade(cfg.crossfade_secs > 0);
@@ -1908,7 +1915,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             vibe_key: None,
             trailer: None,
             wave_tune: Vec::new(),
-            downloading: false,
+            download: None,
         }),
     });
     CTX.with(|c| *c.borrow_mut() = Some(ctx.clone()));
@@ -1948,10 +1955,14 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     app.on_dislike(move || p.send(Cmd::Dislike));
     let p = player.clone();
     app.on_cycle_repeat(move || {
-        let next = match p.state().repeat {
-            Repeat::Off => Repeat::All,
-            Repeat::All => Repeat::One,
-            Repeat::One => Repeat::Off,
+        let s = p.state();
+        // В волне повторять можно только трек, как у оригинала: «нет ↔ трек».
+        let next = match (s.repeat, s.source.station().is_some()) {
+            (Repeat::Off, true) => Repeat::One,
+            (_, true) => Repeat::Off,
+            (Repeat::Off, false) => Repeat::All,
+            (Repeat::All, false) => Repeat::One,
+            (Repeat::One, false) => Repeat::Off,
         };
         p.send(Cmd::Repeat(next));
     });
@@ -2261,10 +2272,28 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
         use slint::winit_030::EventResult;
         use winit::event::{ElementState, MouseButton, WindowEvent};
         match ev {
-            #[cfg(target_os = "linux")]
             WindowEvent::CursorMoved { position, .. } => {
                 let p = position.to_logical::<f32>(_w.scale_factor() as f64);
-                LAST_CURSOR.set(slint::LogicalPosition::new(p.x, p.y));
+                let p = slint::LogicalPosition::new(p.x, p.y);
+                keys::set_cursor(p);
+                #[cfg(target_os = "linux")]
+                LAST_CURSOR.set(p);
+                EventResult::Propagate
+            }
+            WindowEvent::ModifiersChanged(m) => {
+                keys::set_modifiers(m.state());
+                EventResult::Propagate
+            }
+            WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => {
+                if let winit::keyboard::PhysicalKey::Code(code) = event.physical_key {
+                    if keys::on_key(code, event.state == ElementState::Pressed, event.repeat) {
+                        return EventResult::PreventDefault;
+                    }
+                }
+                EventResult::Propagate
+            }
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+                keys::on_mouse_down();
                 EventResult::Propagate
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Back, .. } => {
@@ -2286,6 +2315,14 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             }
             WindowEvent::Moved(_) => {
                 after_move();
+                EventResult::Propagate
+            }
+            // В i3 кадры, нарисованные до того, как окно показано и растянуто, теряются, а Slint
+            // дорисовывает только изменившееся: окно оставалось пустым кусками (#87).
+            // Ждём, пока окно сменит размер или станет видно.
+            #[cfg(target_os = "linux")]
+            WindowEvent::Occluded(false) | WindowEvent::Focused(true) | WindowEvent::Resized(_) => {
+                Timer::single_shot(Duration::from_millis(150), || with_ctx(|c| full_repaint(&c.ui())));
                 EventResult::Propagate
             }
             _ => EventResult::Propagate,
@@ -3083,6 +3120,7 @@ impl Ctx {
             crate::i18n::set_lang(l);
             app.set_lang(l.into());
             ui.global::<T>().set_lang(l.into());
+            keys::show(&app);
             let mut st = self.st.borrow_mut();
             st.cfg.lang = l.to_string();
             st.cfg.save();
@@ -3283,8 +3321,11 @@ impl Ctx {
         }
         if !l.tracks.is_empty() {
             items.push(self.menu_entry("list-playlist", "Добавить в плейлист", icons.get_m_add_playlist(), true));
-            // У «Мне нравится» скачивание вынесено кнопкой в шапку.
-            if !likes {
+            let downloading = self.st.borrow().download.as_ref().is_some_and(|(folder, _)| *folder == l.title);
+            if downloading {
+                items.push(self.menu_entry("list-download-stop", "Отменить скачивание", icons.get_m_download(), false));
+            } else if !likes {
+                // У «Мне нравится» скачивание вынесено кнопкой в шапку.
                 items.push(self.menu_entry("list-download", "Скачать", icons.get_m_download(), false));
             }
         }
@@ -3602,6 +3643,11 @@ impl Ctx {
                 "like" => self.list_like(),
                 "trailer" => self.ui().global::<App>().invoke_list_trailer(),
                 "download" => self.ui().global::<App>().invoke_list_download(),
+                "download-stop" => {
+                    if let Some((_, stop)) = &self.st.borrow().download {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                }
                 "vibe" => {
                     let Some(data) = self.list() else { return };
                     let Data::List(l) = &*data else { return };
@@ -3643,7 +3689,7 @@ impl Ctx {
                 let flac = self.st.borrow().cfg.download_flac;
                 self.toast(format!("Скачиваем «{}»", t.title));
                 std::thread::spawn(move || {
-                    let res = save_track(&api, &dir, &t, flac);
+                    let res = save_track(&api, &dir, &t, flac, &AtomicBool::new(false));
                     net.say(match res {
                         Ok(p) => format!("Сохранено: {}", p.display()),
                         Err(e) => format!("Не удалось скачать: {e}"),
@@ -4263,12 +4309,13 @@ impl Ctx {
         if tracks.is_empty() {
             return;
         }
-        if self.st.borrow().downloading {
+        if self.st.borrow().download.is_some() {
             self.toast("Скачивание уже идёт");
             return;
         }
         let Some(net) = self.st.borrow().net.clone() else { return };
-        self.st.borrow_mut().downloading = true;
+        let stop = Arc::new(AtomicBool::new(false));
+        self.st.borrow_mut().download = Some((folder.clone(), stop.clone()));
         self.toast(format!("Скачиваем {}", tracks_word(tracks.len() as u64)));
         let api = net.api.clone();
         let dir = music_dir(&self.st.borrow().cfg).join(file_name(&folder));
@@ -4277,12 +4324,16 @@ impl Ctx {
             let total = tracks.len();
             let (mut ok, mut failed) = (0, 0);
             for (i, t) in tracks.iter().enumerate() {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
                 if saved_already(&dir, t) {
                     ok += 1;
                     continue;
                 }
-                match save_track(&api, &dir, t, flac) {
+                match save_track(&api, &dir, t, flac, &stop) {
                     Ok(_) => ok += 1,
+                    Err(_) if stop.load(Ordering::Relaxed) => break,
                     Err(e) => {
                         failed += 1;
                         log(format!("скачивание {}: {e}", t.id));
@@ -4292,12 +4343,14 @@ impl Ctx {
                     net.say(format!("Скачано {} из {total}", i + 1));
                 }
             }
-            net.say(if failed == 0 {
+            net.say(if stop.load(Ordering::Relaxed) {
+                format!("Скачивание отменено, скачано {ok} из {total}: {}", dir.display())
+            } else if failed == 0 {
                 format!("Скачано {ok} из {total}: {}", dir.display())
             } else {
                 format!("Скачано {ok} из {total}, не удалось {failed}: {}", dir.display())
             });
-            let _ = slint::invoke_from_event_loop(|| with_ctx(|c| c.st.borrow_mut().downloading = false));
+            let _ = slint::invoke_from_event_loop(|| with_ctx(|c| c.st.borrow_mut().download = None));
         });
     }
 }

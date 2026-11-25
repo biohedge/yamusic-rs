@@ -1,7 +1,7 @@
 // История прослушиваний: сверху вкладки дней, ниже по дням — откуда слушали и треки.
 
 import { Theme } from "theme.slint";
-import { Icons, Icon, Cover, Pic, Shimmer, NavCircle } from "widgets.slint";
+import { Icons, Icon, Cover, Pic, Shimmer, NavCircle, ScrollBar } from "widgets.slint";
 import { T, App, HistRow } from "state.slint";
 import { TrackRow, AlbumTrackRow } from "rows.slint";
 import { CarouselArrow } from "shelf.slint";
@@ -205,5 +205,13 @@ export component HistoryPage inherits Rectangle {
             enabled: tabs.content-x > tabs.width - tabs.content-width;
             clicked => { tabs.content-x = max(tabs.width - tabs.content-width, tabs.content-x - tabs.width * 0.8); }
         }
+    }
+    ScrollBar {
+        x: flick.x;
+        y: flick.y;
+        width: flick.width;
+        height: flick.height;
+        content-y <=> flick.content-y;
+        content-height: flick.content-height;
     }
 }

@@ -1,7 +1,8 @@
 //! Сохранение трека в файл с тегами: общее для десктопа и Android.
 
-use crate::api::{Api, Track};
+use crate::api::{Api, Track, STOPPED};
 use crate::config::log;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Имя файла или папки, которое Windows точно примет: без запрещённых и управляющих
@@ -53,7 +54,8 @@ pub fn saved_already(dir: &std::path::Path, t: &Track) -> bool {
 
 /// Скачать трек: сначала в `.part`, теги — в mp3 и FLAC, и только после этого переименовать в
 /// готовое имя. Обрыв оставит лишь `.part`, который следующая попытка перезапишет.
-pub fn save_track(api: &Api, dir: &std::path::Path, t: &Track, flac: bool) -> Result<std::path::PathBuf, String> {
+/// Скачать трек в `dir`. Поднятый `stop` прерывает загрузку, недокачанный файл удаляется.
+pub fn save_track(api: &Api, dir: &std::path::Path, t: &Track, flac: bool, stop: &AtomicBool) -> Result<std::path::PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let stem = track_file_stem(t);
     let part = dir.join(format!("{stem}.part"));
@@ -72,13 +74,17 @@ pub fn save_track(api: &Api, dir: &std::path::Path, t: &Track, flac: bool) -> Re
             }
             api.stream_url(&t.id).map(|(url, _)| url)
         };
-        match url().and_then(|u| api.download_to(&u, &part)) {
+        match url().and_then(|u| api.download_to(&u, &part, stop)) {
             Ok(n) if n > 0 => {
                 last.clear();
                 break;
             }
             Ok(_) => last = "пустой файл".into(),
             Err(e) => last = e,
+        }
+        if stop.load(Ordering::Relaxed) {
+            last = STOPPED.into();
+            break;
         }
     }
     if !last.is_empty() {

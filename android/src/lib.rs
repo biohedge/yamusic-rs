@@ -38,6 +38,8 @@ mod landing;
 #[path = "../../src/net.rs"]
 #[allow(dead_code)]
 mod net;
+#[path = "../../src/output.rs"]
+mod output;
 #[path = "../../src/palette.rs"]
 mod palette;
 #[path = "../../src/player.rs"]

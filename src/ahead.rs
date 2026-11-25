@@ -27,6 +27,7 @@ pub struct Ahead<S> {
     worker: Thread,
     chunk: Vec<f32>,
     at: usize,
+    ended: bool,
     channels: u16,
     rate: u32,
     total: Option<Duration>,
@@ -63,7 +64,7 @@ impl<S: Source<Item = f32> + Send + 'static> Ahead<S> {
             .expect("decode thread")
             .thread()
             .clone();
-        Ahead { inner, shared, rx, worker, chunk: Vec::new(), at: 0, channels, rate, total }
+        Ahead { inner, shared, rx, worker, chunk: Vec::new(), at: 0, ended: false, channels, rate, total }
     }
 }
 
@@ -78,6 +79,7 @@ impl<S> Iterator for Ahead<S> {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
+        if self.ended { return None; }
         loop {
             if let Some(&x) = self.chunk.get(self.at) {
                 self.at += 1;
@@ -88,6 +90,7 @@ impl<S> Iterator for Ahead<S> {
                 continue;
             }
             if chunk.is_empty() {
+                self.ended = true;
                 return None;
             }
             self.chunk = chunk;
@@ -122,7 +125,28 @@ impl<S: Source<Item = f32>> Source for Ahead<S> {
         };
         self.chunk.clear();
         self.at = 0;
+        self.ended = false;
         self.worker.unpark();
         res
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn resampling_a_finished_track_returns_and_seek_can_replay_it() {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let samples = rodio::buffer::SamplesBuffer::new(1, 48_000, vec![0.5f32; 16]);
+            let mut src = rodio::source::UniformSourceIterator::<_, f32>::new(Ahead::new(samples), 1, 48_000);
+            assert_eq!(src.by_ref().count(), 16);
+            assert_eq!(src.next(), None);
+            src.try_seek(Duration::ZERO).unwrap();
+            tx.send(src.next()).unwrap();
+        });
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Some(0.5));
     }
 }

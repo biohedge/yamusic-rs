@@ -1126,7 +1126,7 @@ fn fetch(api: &Api, uid: &str, key: &Key) -> Result<PageData, String> {
         Key::Artist(id) => artist(api, id)?,
         Key::ArtistTracks(id) => PageData::new("Все треки", vec![Block::new(PLAY, ""), Block::tracks("", api.artist_tracks(id)?)]),
         Key::ArtistAlbums(id) => {
-            let cards = api.artist_albums(id, "direct-albums", "rating")?.iter().map(lcard_from).collect();
+            let cards = api.artist_albums(id, "direct-albums")?.iter().map(lcard_from).collect();
             PageData::new("Альбомы", vec![Block::cards(GRID, "", cards)])
         }
         Key::ArtistPlaylists(id) => {

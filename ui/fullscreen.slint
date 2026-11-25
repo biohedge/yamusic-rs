@@ -155,7 +155,6 @@ component Poster inherits Rectangle {
                 size: 40px;
                 icon: App.repeat == 2 ? Icons.repeat-one-small : Icons.repeat-small;
                 icon-size: 20px;
-                enabled: !App.is-wave;
                 ink: App.repeat > 0 ? Theme.controls-color-primary-default-enabled : #ffffff80;
                 clicked => { App.cycle-repeat(); }
             }

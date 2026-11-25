@@ -230,14 +230,12 @@ fn parse(state: &Value) -> Option<Playing> {
     let queue = player.get("player_queue")?;
     let status = player.get("status")?;
     let str_at = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
-    let track_ids = queue
-        .get("playable_list")?
-        .as_array()?
-        .iter()
-        .filter(|p| p.get("playable_type").and_then(Value::as_str) == Some("TRACK"))
-        .map(|p| str_at(p, "playable_id"))
-        .collect();
-    let index = queue.get("current_playable_index").and_then(Value::as_i64).filter(|i| *i >= 0)? as usize;
+    let entries = queue.get("playable_list")?.as_array()?;
+    let selected = usize::try_from(queue.get("current_playable_index")?.as_i64()?).ok()?;
+    let is_track = |p: &Value| p.get("playable_type").and_then(Value::as_str) == Some("TRACK");
+    if !is_track(entries.get(selected)?) { return None; }
+    let index = entries[..selected].iter().filter(|p| is_track(p)).count();
+    let track_ids = entries.iter().filter(|p| is_track(p)).map(|p| str_at(p, "playable_id")).collect();
     let num = |v: &Value| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok()));
     Some(Playing {
         entity_type: str_at(queue, "entity_type"),
@@ -250,6 +248,22 @@ fn parse(state: &Value) -> Option<Playing> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mixed_queue_keeps_the_selected_track() {
+        let mut state = serde_json::json!({"player_state": {"status": {}, "player_queue": {
+            "playable_list": [
+                {"playable_type": "OTHER", "playable_id": "x"},
+                {"playable_type": "TRACK", "playable_id": "a"},
+                {"playable_type": "TRACK", "playable_id": "b"}
+            ]
+        }}});
+        for (index, expected) in [(1, Some("a")), (2, Some("b")), (0, None), (3, None), (-1, None)] {
+            state["player_state"]["player_queue"]["current_playable_index"] = index.into();
+            let playing = super::parse(&state);
+            assert_eq!(playing.as_ref().and_then(super::Playing::track_id), expected);
+        }
+    }
+
     /// Живой запрос с токеном из config.json: `cargo test ynison -- --ignored --nocapture`.
     /// Записывает текущий трек на 30-й секунде и проверяет, что сервер это запомнил.
     #[test]

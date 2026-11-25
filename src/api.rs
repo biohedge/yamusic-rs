@@ -14,6 +14,8 @@ use crate::client::{token_allowed, ANDROID_CLIENT, API_BASE as BASE, MP3_SALT, S
 
 pub const WAVE: &str = "user:onyourwave";
 /// Срок одного запроса к аудиофайлу. Что не успело скачаться, докачает следующий запрос.
+/// Ошибка `download_to`, когда загрузку остановили.
+pub const STOPPED: &str = "остановлено";
 const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub type Res<T> = Result<T, String>;
@@ -1228,6 +1230,11 @@ impl Api {
             .map(|_| ())
     }
 
+    /// Всё содержимое блока лендинга, как на странице `entities` оригинала: первая страница, 100 карточек.
+    pub fn block_entities(&self, id: &str) -> Res<Vec<Card>> {
+        Ok(cards(&self.get_raw(&format!("/landing/block/{id}/entities?page=0&pageSize=100"))?))
+    }
+
     /// Вкладки «Смотреть всё» коллекции: block — playlists-liked-and-playlists-created или albums-liked-and-albums-presaved.
     pub fn collection_tabs(&self, block: &str) -> Res<Vec<(String, Vec<Card>)>> {
         let v = self.get_raw(&format!("/landing-blocks/collection/{block}?count=500"))?;
@@ -1238,9 +1245,10 @@ impl Api {
         })
     }
 
-    /// Все альбомы исполнителя: path — direct-albums или also-albums, sort — year или rating.
-    pub fn artist_albums(&self, id: &str, path: &str, sort: &str) -> Res<Vec<Card>> {
-        let v = self.get_raw(&format!("/artists/{id}/{path}?page=0&page-size=200&sort-by={sort}"))?;
+    /// Все альбомы исполнителя: path — discography-albums (студийные), direct-albums или also-albums (сборники).
+    /// От новых к старым: страницы альбомов оригинала всегда просят `sort-by=year` (#91).
+    pub fn artist_albums(&self, id: &str, path: &str) -> Res<Vec<Card>> {
+        let v = self.get_raw(&format!("/artists/{id}/{path}?page=0&page-size=200&sort-by=year"))?;
         Ok(v.get("albums").and_then(|a| a.as_array()).map(|a| a.iter().filter_map(parse_album).map(|a| album_card(&a)).collect()).unwrap_or_default())
     }
 
@@ -1458,6 +1466,21 @@ impl Api {
         } else {
             Vec::new()
         }
+    }
+
+    /// Подпись и название последней волны аккаунта («Моя волна под занятие», «В дороге»), если
+    /// это волна по `station`. Оригинал берёт их отсюда же (`getLastVibe`); станция — первый сид.
+    pub fn wave_title(&self, station: &str) -> Option<(String, String)> {
+        let v = match self.get("/rotor/wave/last", &[]) {
+            Ok(v) => v,
+            Err(e) => {
+                crate::config::log(format!("rotor/wave/last: {e}"));
+                return None;
+            }
+        };
+        let name = str_of(&v, "name");
+        (v.pointer("/seeds/0").and_then(|s| s.as_str()) == Some(station) && !name.is_empty())
+            .then(|| (str_of(&v, "description"), name))
     }
 
     /// Какие настройки есть у «Моей волны»: названия, картинки и seeds приходят с сервера.
@@ -1827,14 +1850,28 @@ impl Api {
     }
 
     /// Скачать файл потоком на диск, без чтения целиком в память. Ссылки уже подписаны — без токена.
-    pub fn download_to(&self, url: &str, path: &std::path::Path) -> Res<u64> {
+    /// Поднятый `stop` прерывает загрузку на следующем куске.
+    pub fn download_to(&self, url: &str, path: &std::path::Path, stop: &std::sync::atomic::AtomicBool) -> Res<u64> {
+        use std::io::{Read as _, Write as _};
         let mut resp = self.http.get(url).send().map_err(|e| format!("сеть: {}", crate::config::chain(&e)))?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }
         let expected = resp.content_length();
         let mut f = std::fs::File::create(path).map_err(|e| format!("файл: {e}"))?;
-        let n = std::io::copy(&mut resp, &mut f).map_err(|e| format!("загрузка прервалась: {e}"))?;
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut n = 0u64;
+        loop {
+            if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(STOPPED.into());
+            }
+            let k = resp.read(&mut buf).map_err(|e| format!("загрузка прервалась: {e}"))?;
+            if k == 0 {
+                break;
+            }
+            f.write_all(&buf[..k]).map_err(|e| format!("файл: {e}"))?;
+            n += k as u64;
+        }
         f.sync_all().map_err(|e| format!("файл: {e}"))?;
         if expected.is_some_and(|e| e != n) {
             return Err(format!("загрузка оборвалась: {n} из {} байт", expected.unwrap_or(0)));
