@@ -310,7 +310,12 @@ impl Ctx {
         if app.get_fullscreen() && app.get_fs_mode() == 2 {
             self.sync_lyrics();
         }
-        let Some(t) = s.track.filter(|_| started) else {
+        let track = s.track.filter(|_| started);
+        let current_track_id = track.as_ref().map_or("", |t| t.id.as_str());
+        if app.get_current_track_id().as_str() != current_track_id {
+            app.set_current_track_id(current_track_id.into());
+        }
+        let Some(t) = track else {
             app.set_title(SharedString::new());
             app.set_artists(SharedString::new());
             return;
@@ -2048,7 +2053,10 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
         with_ctx(|c| {
             let Some(data) = c.collection() else { return };
             let Data::Collection(col) = &*data else { return };
-            let Some(t) = col.likes_preview.get(i as usize).cloned() else { return };
+            let Some(t) = col.likes_preview.get(i as usize) else { return };
+            if c.st.borrow().started && c.player.play_pause_if_current(&t.id) {
+                return;
+            }
             let full = c.st.borrow().net.as_ref().and_then(|n| n.get("likes")).and_then(|r| r.ok());
             let tracks = match full.as_deref() {
                 Some(Data::List(l)) => l.tracks.clone(),

@@ -138,6 +138,7 @@ pub enum Cmd {
 
 enum Msg {
     Cmd(Cmd),
+    PlayPause { track_generation: u64 },
     Seek { seconds: f32, track_generation: u64, request: u64 },
     Account(Res<Account>),
     Likes(String, Res<Vec<String>>),
@@ -178,6 +179,13 @@ impl Player {
 
     pub fn send(&self, c: Cmd) {
         let _ = self.tx.send(Msg::Cmd(c));
+    }
+
+    /// Пауза и продолжение относятся к выбранному треку, даже если очередь успела продвинуться.
+    pub fn play_pause_if_current(&self, id: &str) -> bool {
+        let s = self.shared.lock().unwrap();
+        !id.is_empty() && s.track.as_ref().is_some_and(|t| t.id == id)
+            && self.tx.send(Msg::PlayPause { track_generation: s.track_generation }).is_ok()
     }
 
     /// Перед выходом: дождаться, пока Ynison запишет, где остановились, но не дольше 3 секунд.
@@ -1129,6 +1137,11 @@ impl Engine {
     fn handle(&mut self, msg: Msg) {
         match msg {
             Msg::Cmd(c) => self.cmd(c),
+            Msg::PlayPause { track_generation } => {
+                if self.gen == track_generation {
+                    self.cmd(Cmd::PlayPause);
+                }
+            }
             Msg::Seek { seconds, track_generation, request } => {
                 if self.gen == track_generation && self.sh().seek_request == request {
                     self.cmd(Cmd::Seek(seconds));
@@ -2072,6 +2085,32 @@ mod tests {
         e.handle(rx.recv().unwrap());
         e.sync();
         assert_eq!(player.state().position, 0.0);
+    }
+
+    #[test]
+    fn play_pause_applies_only_to_the_selected_track() {
+        let (tx, rx) = mpsc::channel();
+        let mut e = Engine::new(tx.clone(), Default::default(), Default::default(), Arc::new(|| {}), Default::default());
+        let player = Player { tx, shared: e.shared.clone(), likes: e.likes.clone(), eq: e.eq.clone() };
+        let track = |id| crate::api::parse_track(&serde_json::json!({"id": id, "title": "Трек"}));
+        e.current = track(1);
+        e.start_current();
+        e.paused = false;
+
+        assert!(!player.play_pause_if_current("2"));
+        assert!(rx.try_recv().is_err());
+        assert!(player.play_pause_if_current("1"));
+        e.handle(rx.try_recv().unwrap());
+        assert!(e.paused);
+        assert!(player.play_pause_if_current("1"));
+        e.handle(rx.try_recv().unwrap());
+        assert!(!e.paused);
+
+        assert!(player.play_pause_if_current("1"));
+        e.current = track(2);
+        e.start_current();
+        e.handle(rx.try_recv().unwrap());
+        assert!(!e.paused);
     }
 
     #[test]

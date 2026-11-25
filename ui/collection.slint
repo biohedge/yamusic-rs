@@ -125,6 +125,7 @@ component CollectionContent inherits TouchArea {
                         property <length> pointer-y: root.mouse-y + root.absolute-position.y - self.absolute-position.y;
                         hot: root.has-hover && pointer-x >= 0px && pointer-x < self.width && pointer-y >= 0px && pointer-y < self.height;
                         item: t;
+                        current: t.id != "" && t.id == App.current-track-id;
                         block: "likes-preview";
                         index: i;
                         play => { App.play-likes-preview(i); }
