@@ -11,6 +11,7 @@ use std::sync::Arc;
 pub struct Output {
     _stream: cpal::Stream,
     mixer: Arc<DynamicMixerController<f32>>,
+    sample_rate: u32,
     broken: Arc<AtomicBool>,
 }
 
@@ -27,9 +28,10 @@ impl Output {
     }
 
     pub fn open_with(dev: &cpal::Device, config: SupportedStreamConfig) -> Result<Output, StreamError> {
-        let (mixer, out) = dynamic_mixer::mixer::<f32>(config.channels(), config.sample_rate().0);
-        let broken = Arc::new(AtomicBool::new(false));
         let cfg = config.config();
+        let sample_rate = cfg.sample_rate.0;
+        let (mixer, out) = dynamic_mixer::mixer::<f32>(cfg.channels, sample_rate);
+        let broken = Arc::new(AtomicBool::new(false));
         let stream = match config.sample_format() {
             SampleFormat::F32 => build::<f32>(dev, &cfg, out, &broken),
             SampleFormat::F64 => build::<f64>(dev, &cfg, out, &broken),
@@ -45,7 +47,11 @@ impl Output {
         }
         .map_err(StreamError::BuildStreamError)?;
         stream.play().map_err(StreamError::PlayStreamError)?;
-        Ok(Output { _stream: stream, mixer, broken })
+        Ok(Output { _stream: stream, mixer, sample_rate, broken })
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
     }
 
     /// Новый Sink на этом выходе.

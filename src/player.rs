@@ -79,6 +79,8 @@ pub struct Shared {
     pub upcoming: Vec<Track>,
     pub playing: bool,
     pub likes_revision: i32,
+    /// Текущий трек в «Не нравится».
+    pub disliked: bool,
     pub loading: bool,
     pub position: f32,
     track_generation: u64,
@@ -142,6 +144,7 @@ enum Msg {
     Seek { seconds: f32, track_generation: u64, request: u64 },
     Account(Res<Account>),
     Likes(String, Res<Vec<String>>),
+    Dislikes(String, Res<Vec<String>>),
     LikeFinished { uid: String, id: String, liked: bool, result: Res<()> },
     Batch { res: Res<Batch>, replace: bool, gen: u64 },
     Audio { gen: u64, res: Res<Audio> },
@@ -464,6 +467,7 @@ struct Engine {
     likes: Likes,
     // Запоминаем и снятые лайки, иначе старый список с сервера может их вернуть.
     like_writes: HashMap<String, LikeWrite>,
+    dislikes: HashSet<String>,
     notify: Notify,
     eq: Arc<EqParams>,
     audio: Option<(Output, Sink)>,
@@ -556,6 +560,7 @@ impl Engine {
             shared,
             likes,
             like_writes: HashMap::new(),
+            dislikes: HashSet::new(),
             notify,
             eq,
             audio: None,
@@ -670,7 +675,9 @@ impl Engine {
     /// Источник для звука: эквалайзер, декодирование наперёд и затухание для кроссфейда.
     fn source(&mut self, src: Decoder<Reader>, fade_in: Duration) -> impl rodio::Source<Item = f32> + Send + 'static {
         self.fade_out = Arc::default();
-        Fade::new(Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone())), fade_in, self.fade_out.clone())
+        let rate = self.audio.as_ref().map_or_else(|| src.sample_rate(), |(out, _)| out.sample_rate());
+        let eq = Eq::new(src.convert_samples::<f32>(), self.eq.clone());
+        Fade::new(Ahead::new(eq, rate), fade_in, self.fade_out.clone())
     }
 
     /// Пора ли начать кроссфейд: до конца трека осталось его время и следующий трек уже скачан.
@@ -1170,7 +1177,9 @@ impl Engine {
                         let uid = acc.uid;
                         thread::spawn(move || {
                             let ids = api.liked_ids(&uid);
-                            let _ = tx.send(Msg::Likes(uid, ids));
+                            let _ = tx.send(Msg::Likes(uid.clone(), ids));
+                            let ids = api.disliked_ids(&uid);
+                            let _ = tx.send(Msg::Dislikes(uid, ids));
                         });
                     }
                 }
@@ -1192,6 +1201,15 @@ impl Engine {
             Msg::Likes(_, res) => match res {
                 Ok(ids) => self.merge_liked_ids(ids),
                 Err(e) => log(format!("likes: {e}")),
+            },
+            Msg::Dislikes(uid, _) if uid != self.uid => {}
+            Msg::Dislikes(_, res) => match res {
+                Ok(ids) => {
+                    self.dislikes.extend(ids);
+                    let disliked = self.current.as_ref().is_some_and(|t| self.dislikes.contains(&t.id));
+                    self.sh().disliked = disliked;
+                }
+                Err(e) => log(format!("dislikes: {e}")),
             },
             Msg::LikeFinished { uid, id, liked, result } => {
                 if uid != self.uid { return; }
@@ -1327,15 +1345,26 @@ impl Engine {
             }
             Cmd::LikeTrack(t, saved) => self.toggle_like(t, saved),
             Cmd::Dislike => {
-                if let (Some(api), Some(t)) = (self.api.clone(), self.current.as_ref()) {
-                    let id = t.full_id();
-                    let uid = self.uid.clone();
-                    let tx = self.tx.clone();
+                let Some(t) = self.current.clone() else { return };
+                // Повторное нажатие снимает дизлайк, трек доигрывает.
+                let remove = self.dislikes.contains(&t.id);
+                if let Some(api) = self.api.clone() {
+                    let (id, uid, tx) = (t.full_id(), self.uid.clone(), self.tx.clone());
                     let _ = self.bg.send(Box::new(move || {
-                        if let Err(e) = api.dislike(&uid, &id) {
+                        if let Err(e) = api.dislike(&uid, &id, remove) {
                             let _ = tx.send(Msg::Error(format!("Дизлайк не сохранился: {e}")));
                         }
                     }));
+                }
+                if remove {
+                    self.dislikes.remove(&t.id);
+                    self.sh().disliked = false;
+                    return;
+                }
+                self.dislikes.insert(t.id.clone());
+                // Сервер снимает лайк с дизлайкнутого трека.
+                if self.likes.lock().unwrap().remove(&t.id) {
+                    self.likes_changed();
                 }
                 self.advance(End::Dislike);
             }
@@ -1448,6 +1477,10 @@ impl Engine {
             }
             had
         };
+        // Сервер снимает дизлайк с лайкнутого трека.
+        if !remove && self.dislikes.remove(&t.id) && self.current.as_ref().is_some_and(|c| c.id == t.id) {
+            self.sh().disliked = false;
+        }
         self.likes_changed();
         self.like_writes.entry(t.id.clone()).or_insert(LikeWrite { pending: 0, saved: remove }).pending += 1;
         let (uid, track, tx) = (self.uid.clone(), t.clone(), self.tx.clone());
@@ -1808,6 +1841,7 @@ impl Engine {
         {
             let mut s = self.sh();
             s.track_generation = self.gen;
+            s.disliked = self.dislikes.contains(&t.id);
             s.track = Some(t.clone());
             s.position = 0.0;
             s.duration = t.duration_ms as f32 / 1000.0;

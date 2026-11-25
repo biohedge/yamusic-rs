@@ -321,6 +321,7 @@ impl Ctx {
             return;
         };
         app.set_liked(self.player.is_liked(&t.id));
+        app.set_disliked(s.disliked);
         let changed = self.st.borrow().track_id.as_deref() != Some(t.id.as_str());
         if changed {
             self.st.borrow_mut().track_id = Some(t.id.clone());
@@ -1674,6 +1675,7 @@ fn set_icons(ui: &AppWindow, sprite: &Sprite) {
     icons.set_like(get("like_xs"));
     icons.set_liked(get("liked_xs"));
     icons.set_dislike(get("dislike_xs"));
+    icons.set_disliked(get("disliked_xs"));
     icons.set_shuffle(get("shuffle_xs"));
     icons.set_repeat(get("repeat_xs"));
     icons.set_repeat_one(get("repeat_one_xs"));
@@ -1741,6 +1743,7 @@ fn set_icons(ui: &AppWindow, sprite: &Sprite) {
     icons.set_m_play_next(get("playNext_xxs"));
     icons.set_m_play_last(get("playLast_xxs"));
     icons.set_m_dislike(get("dislike_xxs"));
+    icons.set_m_disliked(get("disliked_xxs"));
     icons.set_m_add_playlist(get("addToPlaylist_xxs"));
     icons.set_m_lyrics(get("lyrics_xxs"));
     icons.set_m_share(get("share_xxs"));
@@ -1956,8 +1959,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             with_ctx(|c| c.like(t));
         }
     });
-    let p = player.clone();
-    app.on_dislike(move || p.send(Cmd::Dislike));
+    app.on_dislike(|| with_ctx(|c| c.dislike()));
     let p = player.clone();
     app.on_cycle_repeat(move || {
         let s = p.state();
@@ -3100,7 +3102,12 @@ impl Ctx {
             self.menu_entry("last", "Добавить в конец очереди", icons.get_m_play_last(), false),
         ];
         if current {
-            items.push(self.menu_entry("dislike", "Не нравится", icons.get_m_dislike(), false));
+            let entry = if self.player.state().disliked {
+                self.menu_entry("dislike", "Убрать из «Не нравится»", icons.get_m_disliked(), false)
+            } else {
+                self.menu_entry("dislike", "Не нравится", icons.get_m_dislike(), false)
+            };
+            items.push(entry);
         }
         items.push(self.menu_entry("playlist", "Добавить в плейлист", icons.get_m_add_playlist(), true));
         if t.lyrics && current {
@@ -3712,7 +3719,7 @@ impl Ctx {
                 self.player.send(Cmd::Enqueue { track: t, next: false });
                 self.toast("Трек добавлен в конец очереди");
             }
-            "dislike" => self.player.send(Cmd::Dislike),
+            "dislike" => self.dislike(),
             "lyrics" => self.open_fullscreen(2),
             "share-link" => {
                 sys::copy_text(&track_link(&t));
@@ -4183,6 +4190,17 @@ impl Ctx {
                 if c.st.borrow().uid == uid { c.like_toast(&track, liked); }
             }));
         }))));
+    }
+
+    /// Дизлайк снимает лайк, поэтому «Мне нравится» обновляется сразу, как при снятии сердечка.
+    fn dislike(self: &Rc<Self>) {
+        let s = self.player.state();
+        if let (Some(t), false, Some(net)) = (s.track, s.disliked, self.st.borrow().net.clone()) {
+            if self.player.is_liked(&t.id) {
+                std::thread::spawn(move || net.like_saved(&t, false));
+            }
+        }
+        self.player.send(Cmd::Dislike);
     }
 
     fn like_toast(self: &Rc<Self>, t: &Track, liked: bool) {

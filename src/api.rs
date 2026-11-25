@@ -1555,12 +1555,21 @@ impl Api {
             .map(|_| ())
     }
 
-    pub fn dislike(&self, uid: &str, track_full_id: &str) -> Res<()> {
+    pub fn dislike(&self, uid: &str, track_full_id: &str, remove: bool) -> Res<()> {
+        let action = if remove { "remove" } else { "add-multiple" };
         self.send(
-            self.req(Method::POST, &format!("/users/{uid}/dislikes/tracks/add-multiple"))
+            self.req(Method::POST, &format!("/users/{uid}/dislikes/tracks/{action}"))
                 .form(&[("track-ids", track_full_id)]),
         )
-        .map(|v| crate::config::log(format!("dislike {track_full_id}: {v}")))
+        .map(|v| crate::config::log(format!("dislike {action} {track_full_id}: {v}")))
+    }
+
+    pub fn disliked_ids(&self, uid: &str) -> Res<Vec<String>> {
+        let v = self.get(&format!("/users/{uid}/dislikes/tracks"), &[])?;
+        Ok(v.pointer("/library/tracks")
+            .and_then(|t| t.as_array())
+            .map(|a| a.iter().filter_map(|x| s(x.get("id"))).collect())
+            .unwrap_or_default())
     }
 
     // ---------- каталог ----------
@@ -1702,7 +1711,8 @@ impl Api {
 
     /// Название (`name`) или описание (`description`) плейлиста.
     pub fn set_playlist_field(&self, uid: &str, kind: &str, field: &str, value: &str) -> Res<()> {
-        self.send(self.req(Method::POST, &format!("/users/{uid}/playlists/{kind}/{field}")).query(&[("value", value)])).map(|_| ())
+        // В строке запроса описание длиннее ~800 букв сервер отбивает с 431, в форме длина не ограничена.
+        self.send(self.req(Method::POST, &format!("/users/{uid}/playlists/{kind}/{field}")).form(&[("value", value)])).map(|_| ())
     }
 
     pub fn delete_playlist(&self, uid: &str, kind: &str) -> Res<()> {
