@@ -18,11 +18,13 @@ pub struct Output {
 impl Output {
     /// Поток с настройками устройства по умолчанию, а если не открылся, с любыми поддерживаемыми.
     pub fn open(dev: &cpal::Device) -> Result<Output, StreamError> {
-        let config = dev.default_output_config().map_err(StreamError::DefaultStreamConfigError)?;
-        Output::open_with(dev, config).or_else(|e| {
+        let default = dev.default_output_config().map_err(StreamError::DefaultStreamConfigError)
+            .and_then(|config| Output::open_with(dev, config));
+        default.or_else(|e| {
             dev.supported_output_configs()
                 .map_err(StreamError::SupportedStreamConfigsError)?
-                .find_map(|c| Output::open_with(dev, c.with_max_sample_rate()).ok())
+                .flat_map(fallback_formats)
+                .find_map(|config| Output::open_with(dev, config).ok())
                 .ok_or(e)
         })
     }
@@ -85,4 +87,31 @@ fn build<T: SizedSample + FromSample<f32>>(
         },
         None,
     )
+}
+
+/// Максимум, распространённые частоты и минимум, без повторов на границах.
+fn fallback_formats(config: cpal::SupportedStreamConfigRange) -> impl Iterator<Item = SupportedStreamConfig> {
+    let min = config.min_sample_rate();
+    let max = config.max_sample_rate();
+    let cd = cpal::SampleRate(44_100);
+    let studio = cpal::SampleRate(48_000);
+    [
+        Some(max),
+        (min < cd && cd < max).then_some(cd),
+        (min < studio && studio < max).then_some(studio),
+        (min != max).then_some(min),
+    ].into_iter().flatten().map(move |rate| config.with_sample_rate(rate))
+}
+
+#[cfg(test)]
+#[test]
+fn output_rate_fallback_keeps_cd_rate_and_lower_bound() {
+    let rates = |min, max| {
+        let range = cpal::SupportedStreamConfigRange::new(2, cpal::SampleRate(min), cpal::SampleRate(max),
+            cpal::SupportedBufferSize::Unknown, SampleFormat::F32);
+        fallback_formats(range).map(|cfg| cfg.sample_rate().0).collect::<Vec<_>>()
+    };
+    assert_eq!(rates(32_000, 192_000), [192_000, 44_100, 48_000, 32_000]);
+    assert_eq!(rates(44_100, 48_000), [48_000, 44_100]);
+    assert_eq!(rates(48_000, 48_000), [48_000]);
 }

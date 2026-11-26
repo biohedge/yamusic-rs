@@ -119,7 +119,9 @@ pub enum Cmd {
     Volume(f32),
     Loudness(Loudness),
     LikeTrack(Track, Option<LikeCompleted>),
-    Dislike,
+    Dislike(Option<LikeCompleted>),
+    #[cfg(target_os = "android")]
+    DislikeTrack(Track),
     Wave(Source),
     /// Заново начать «Мою волну» с настройками (seeds `setting…`).
     TuneWave(Vec<String>),
@@ -145,12 +147,11 @@ enum Msg {
     Account(Res<Account>),
     Likes(String, Res<Vec<String>>),
     Dislikes(String, Res<Vec<String>>),
-    LikeFinished { uid: String, id: String, liked: bool, result: Res<()> },
+    ReactionFinished { uid: String, id: String, seq: u64, kind: Reaction, remove: bool, result: Res<()> },
     Batch { res: Res<Batch>, replace: bool, gen: u64 },
     Audio { gen: u64, res: Res<Audio> },
     Prefetch { id: String, res: Res<Audio> },
     Resume(Res<Option<Resume>>),
-    Error(String),
 }
 
 type Notify = Arc<dyn Fn() + Send + Sync>;
@@ -465,8 +466,9 @@ struct Engine {
     bg: Sender<Job>,
     shared: Arc<Mutex<Shared>>,
     likes: Likes,
-    // Запоминаем и снятые лайки, иначе старый список с сервера может их вернуть.
-    like_writes: HashMap<String, LikeWrite>,
+    // Запоминаем подтверждённые реакции, чтобы запоздалый список с сервера их не заменил.
+    reaction_writes: HashMap<String, ReactionWrite>,
+    reaction_seq: u64,
     dislikes: HashSet<String>,
     notify: Notify,
     eq: Arc<EqParams>,
@@ -537,9 +539,20 @@ struct Engine {
     handled_seek: u64,
 }
 
-struct LikeWrite {
-    pending: usize,
-    saved: bool,
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reaction { Like, Dislike }
+
+impl Reaction {
+    fn applied(self, saved: Option<Self>, remove: bool) -> Option<Self> {
+        if remove { saved.filter(|old| *old != self) } else { Some(self) }
+    }
+}
+
+struct ReactionWrite {
+    first: u64,
+    latest: u64,
+    saved: Option<Reaction>,
+    confirmed: bool,
 }
 
 impl Engine {
@@ -559,7 +572,8 @@ impl Engine {
             bg,
             shared,
             likes,
-            like_writes: HashMap::new(),
+            reaction_writes: HashMap::new(),
+            reaction_seq: 0,
             dislikes: HashSet::new(),
             notify,
             eq,
@@ -1199,31 +1213,31 @@ impl Engine {
             },
             Msg::Likes(uid, _) if uid != self.uid => {}
             Msg::Likes(_, res) => match res {
-                Ok(ids) => self.merge_liked_ids(ids),
+                Ok(ids) => self.merge_reactions(ids, Reaction::Like),
                 Err(e) => log(format!("likes: {e}")),
             },
             Msg::Dislikes(uid, _) if uid != self.uid => {}
             Msg::Dislikes(_, res) => match res {
-                Ok(ids) => {
-                    self.dislikes.extend(ids);
-                    let disliked = self.current.as_ref().is_some_and(|t| self.dislikes.contains(&t.id));
-                    self.sh().disliked = disliked;
-                }
+                Ok(ids) => self.merge_reactions(ids, Reaction::Dislike),
                 Err(e) => log(format!("dislikes: {e}")),
             },
-            Msg::LikeFinished { uid, id, liked, result } => {
+            Msg::ReactionFinished { uid, id, seq, kind, remove, result } => {
                 if uid != self.uid { return; }
-                if let Some(write) = self.like_writes.get_mut(&id).filter(|w| w.pending > 0) {
-                    if result.is_ok() { write.saved = liked; }
-                    write.pending -= 1;
-                    if write.pending == 0 {
-                        let mut likes = self.likes.lock().unwrap();
-                        let changed = if write.saved { likes.insert(id) } else { likes.remove(&id) };
-                        drop(likes);
-                        if changed { self.likes_changed(); }
-                    }
+                let Some(write) = self.reaction_writes.get_mut(&id) else { return };
+                if seq < write.first { return; }
+                if result.is_ok() {
+                    write.saved = kind.applied(write.saved, remove);
+                    write.confirmed = true;
                 }
-                if let Err(e) = result { self.error(format!("Лайк не сохранился: {e}")); }
+                if seq == write.latest {
+                    let saved = write.saved;
+                    if !write.confirmed { self.reaction_writes.remove(&id); }
+                    self.show_reaction(&id, saved);
+                }
+                if let Err(e) = result {
+                    let name = if kind == Reaction::Like { "Лайк" } else { "Дизлайк" };
+                    self.error(format!("{name} не сохранился: {e}"));
+                }
             }
             Msg::Batch { res, replace, gen } => {
                 if gen != self.batch_gen {
@@ -1262,7 +1276,6 @@ impl Engine {
                     }
                 }
             }
-            Msg::Error(e) => self.error(e),
         }
     }
 
@@ -1270,7 +1283,9 @@ impl Engine {
         match c {
             Cmd::Login(token) => {
                 self.reset();
-                self.like_writes.clear();
+                self.reaction_writes.clear();
+                self.dislikes.clear();
+                self.sh().disliked = false;
                 self.likes.lock().unwrap().clear();
                 self.likes_changed();
                 let api = Api::new(&token);
@@ -1290,7 +1305,9 @@ impl Engine {
                 self.api = None;
                 self.uid.clear();
                 self.likes.lock().unwrap().clear();
-                self.like_writes.clear();
+                self.reaction_writes.clear();
+                self.dislikes.clear();
+                self.sh().disliked = false;
                 self.likes_changed();
                 let mut s = self.sh();
                 s.status = Status::LoggedOut;
@@ -1344,30 +1361,14 @@ impl Engine {
                 self.apply_volume();
             }
             Cmd::LikeTrack(t, saved) => self.toggle_like(t, saved),
-            Cmd::Dislike => {
-                let Some(t) = self.current.clone() else { return };
-                // Повторное нажатие снимает дизлайк, трек доигрывает.
-                let remove = self.dislikes.contains(&t.id);
-                if let Some(api) = self.api.clone() {
-                    let (id, uid, tx) = (t.full_id(), self.uid.clone(), self.tx.clone());
-                    let _ = self.bg.send(Box::new(move || {
-                        if let Err(e) = api.dislike(&uid, &id, remove) {
-                            let _ = tx.send(Msg::Error(format!("Дизлайк не сохранился: {e}")));
-                        }
-                    }));
-                }
-                if remove {
-                    self.dislikes.remove(&t.id);
-                    self.sh().disliked = false;
-                    return;
-                }
-                self.dislikes.insert(t.id.clone());
-                // Сервер снимает лайк с дизлайкнутого трека.
-                if self.likes.lock().unwrap().remove(&t.id) {
-                    self.likes_changed();
-                }
-                self.advance(End::Dislike);
+            Cmd::Dislike(done) => {
+                let Some(track) = self.current.clone() else { return };
+                let remove = self.dislikes.contains(&track.id);
+                self.write_reaction(&track, Reaction::Dislike, remove, done);
+                if !remove { self.advance(End::Dislike); }
             }
+            #[cfg(target_os = "android")]
+            Cmd::DislikeTrack(track) => self.write_reaction(&track, Reaction::Dislike, false, None),
             Cmd::Wave(src) => self.start_wave(src, true),
             Cmd::TuneWave(settings) => {
                 self.start_wave(Source::Wave, false);
@@ -1458,37 +1459,60 @@ impl Engine {
         s.likes_revision = s.likes_revision.wrapping_add(1);
     }
 
-    fn merge_liked_ids(&self, ids: Vec<String>) {
+    fn merge_reactions(&mut self, ids: Vec<String>, kind: Reaction) {
         let mut likes = self.likes.lock().unwrap();
-        let before = likes.len();
-        likes.extend(ids.into_iter().filter(|id| !self.like_writes.contains_key(id)));
-        let changed = likes.len() != before;
+        let mut changed = false;
+        for id in ids {
+            if let Some(write) = self.reaction_writes.get_mut(&id) {
+                // Пока первый запрос ещё выполняется, снимок уточняет состояние для отката.
+                if !write.confirmed { write.saved = Some(kind); }
+                continue;
+            }
+            match kind {
+                Reaction::Like => { self.dislikes.remove(&id); changed |= likes.insert(id); }
+                Reaction::Dislike => { changed |= likes.remove(&id); self.dislikes.insert(id); }
+            }
+        }
         drop(likes);
         if changed { self.likes_changed(); }
+        self.sh().disliked = self.current.as_ref().is_some_and(|t| self.dislikes.contains(&t.id));
+    }
+
+    fn show_reaction(&mut self, id: &str, state: Option<Reaction>) {
+        let mut likes = self.likes.lock().unwrap();
+        let changed = if state == Some(Reaction::Like) { likes.insert(id.to_string()) } else { likes.remove(id) };
+        drop(likes);
+        if changed { self.likes_changed(); }
+        let disliked = state == Some(Reaction::Dislike);
+        if disliked { self.dislikes.insert(id.to_string()); } else { self.dislikes.remove(id); }
+        if self.current.as_ref().is_some_and(|t| t.id == id) { self.sh().disliked = disliked; }
+    }
+
+    fn write_reaction(&mut self, track: &Track, kind: Reaction, remove: bool, done: Option<LikeCompleted>) {
+        let Some(api) = self.api.clone() else { return };
+        let old = if self.likes.lock().unwrap().contains(&track.id) { Some(Reaction::Like) }
+            else if self.dislikes.contains(&track.id) { Some(Reaction::Dislike) } else { None };
+        self.reaction_seq += 1;
+        let seq = self.reaction_seq;
+        self.reaction_writes.entry(track.id.clone()).or_insert(ReactionWrite {
+            first: seq, latest: seq, saved: old, confirmed: false,
+        }).latest = seq;
+        self.show_reaction(&track.id, kind.applied(old, remove));
+        let (uid, track, tx) = (self.uid.clone(), track.clone(), self.tx.clone());
+        let _ = self.bg.send(Box::new(move || {
+            let id = track.full_id();
+            let result = match kind {
+                Reaction::Like => api.like(&uid, &id, remove),
+                Reaction::Dislike => api.dislike(&uid, &id, remove),
+            };
+            if let Some(done) = done { done(&track, !remove, &result); }
+            let _ = tx.send(Msg::ReactionFinished { uid, id: track.id, seq, kind, remove, result });
+        }));
     }
 
     fn toggle_like(&mut self, t: Track, done: Option<LikeCompleted>) {
-        let Some(api) = self.api.clone() else { return };
-        let remove = {
-            let mut l = self.likes.lock().unwrap();
-            let had = l.remove(&t.id);
-            if !had {
-                l.insert(t.id.clone());
-            }
-            had
-        };
-        // Сервер снимает дизлайк с лайкнутого трека.
-        if !remove && self.dislikes.remove(&t.id) && self.current.as_ref().is_some_and(|c| c.id == t.id) {
-            self.sh().disliked = false;
-        }
-        self.likes_changed();
-        self.like_writes.entry(t.id.clone()).or_insert(LikeWrite { pending: 0, saved: remove }).pending += 1;
-        let (uid, track, tx) = (self.uid.clone(), t.clone(), self.tx.clone());
-        let _ = self.bg.send(Box::new(move || {
-            let result = api.like(&uid, &track.full_id(), remove);
-            if let Some(done) = done { done(&track, !remove, &result); }
-            let _ = tx.send(Msg::LikeFinished { uid, id: track.id, liked: !remove, result });
-        }));
+        let remove = self.likes.lock().unwrap().contains(&t.id);
+        self.write_reaction(&t, Reaction::Like, remove, done);
         // Лайк трека из волны оригинал сообщает и самой волне, чтобы она его учла.
         if self.session.is_empty() {
             return;
@@ -1571,7 +1595,7 @@ impl Engine {
                 self.save_wave();
             }
         }
-        self.merge_liked_ids(b.liked);
+        self.merge_reactions(b.liked, Reaction::Like);
         if replace {
             self.queue.clear();
             self.prefetch = None;
@@ -2148,6 +2172,28 @@ mod tests {
     }
 
     #[test]
+    fn dislike_survives_an_earlier_like_reply() {
+        let mut e = Engine::new(mpsc::channel().0, Default::default(), Default::default(), Arc::new(|| {}), Default::default());
+        let (bg, _jobs) = mpsc::channel();
+        e.bg = bg;
+        e.api = Some(Api::new(""));
+        e.uid = "account".into();
+        let track = crate::api::parse_track(&serde_json::json!({"id": 7, "title": "Track"})).unwrap();
+        e.current = Some(track.clone());
+        e.toggle_like(track, None);
+        e.cmd(Cmd::Dislike(None));
+        e.handle(Msg::ReactionFinished { uid: "account".into(), id: "7".into(), seq: 1, kind: Reaction::Like, remove: false, result: Ok(()) });
+        assert!(!e.likes.lock().unwrap().contains("7"));
+        assert!(e.dislikes.contains("7"));
+        e.handle(Msg::Likes("account".into(), Ok(vec!["7".into()])));
+        assert!(!e.likes.lock().unwrap().contains("7"));
+        e.handle(Msg::ReactionFinished { uid: "account".into(), id: "7".into(), seq: 2, kind: Reaction::Dislike,
+            remove: false, result: Err("offline".into()) });
+        assert!(e.likes.lock().unwrap().contains("7"));
+        assert!(!e.dislikes.contains("7"));
+    }
+
+    #[test]
     fn queued_likes_keep_the_last_saved_state_on_error() {
         let mut e = Engine::new(mpsc::channel().0, Default::default(), Default::default(), Arc::new(|| {}), Default::default());
         let (bg, _jobs) = mpsc::channel();
@@ -2155,15 +2201,15 @@ mod tests {
         e.api = Some(Api::new(""));
         e.uid = "account".into();
         let track = crate::api::parse_track(&serde_json::json!({"id": 7, "title": "Track"})).unwrap();
-        let reply = |liked, result| Msg::LikeFinished { uid: "account".into(), id: "7".into(), liked, result };
+        let reply = |seq, remove, result| Msg::ReactionFinished { uid: "account".into(), id: "7".into(), seq, kind: Reaction::Like, remove, result };
         e.toggle_like(track.clone(), None);
         e.toggle_like(track.clone(), None);
-        e.handle(reply(true, Ok(())));
+        e.handle(reply(1, false, Ok(())));
         assert!(!e.likes.lock().unwrap().contains("7"));
-        e.handle(reply(false, Err("offline".into())));
+        e.handle(reply(2, true, Err("offline".into())));
         assert!(e.likes.lock().unwrap().contains("7"));
         e.toggle_like(track, None);
-        e.handle(reply(false, Ok(())));
+        e.handle(reply(3, true, Ok(())));
         e.handle(Msg::Likes("account".into(), Ok(vec!["7".into(), "9".into()])));
         let likes = e.likes.lock().unwrap();
         assert!(!likes.contains("7"));

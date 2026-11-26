@@ -199,6 +199,19 @@ fn fetch(api: &Api, uid: &str, key: &str) -> Res<Data> {
                 artist: None,
             })
         }),
+        "dislikes" => {
+            let ids = api.disliked_ids(uid)?;
+            let tracks = if ids.is_empty() { Vec::new() } else { api.tracks(&ids)? };
+            Ok(Data::List(ListData {
+                kind: ListKind::Tracks,
+                title: "Мои дизлайки".into(),
+                covers: Vec::new(),
+                tracks,
+                playlist: None,
+                album: None,
+                artist: None,
+            }))
+        }
         "artist-tracks" | "familiar" => {
             let info = api.get_raw(&format!("/artists/{arg}/info"))?;
             let a = info.get("artist").and_then(crate::api::parse_artist).ok_or("нет данных об исполнителе")?;
@@ -277,6 +290,21 @@ impl Net {
 
     /// Обновляем «Мне нравится» и коллекцию в том порядке, в каком сервер подтвердил лайки.
     pub fn like_saved(&self, track: &Track, liked: bool) {
+        self.update_likes(track, liked, true);
+    }
+
+    /// Выкинуть ключ из кэша: при следующем открытии загрузится заново.
+    pub fn forget(&self, key: &str) {
+        self.store.lock().unwrap().remove(key);
+    }
+
+    pub(crate) fn dislike_saved(&self, track: &Track) {
+        self.forget("dislikes");
+        // Дизлайк мог относиться к треку, у которого вообще не было лайка.
+        self.update_likes(track, false, false);
+    }
+
+    fn update_likes(&self, track: &Track, liked: bool, toggled_like: bool) {
         let mut store = self.store.lock().unwrap();
         let keys = ["likes", "collection"];
         for key in keys {
@@ -294,7 +322,7 @@ impl Net {
         let mut refill = false;
         if let Some(Data::Collection(c)) = store.get_mut("collection").and_then(Slot::edit) {
             let was_visible = c.likes_preview.iter().any(|t| t.id == track.id);
-            let changed = full.as_ref().is_none_or(|(changed, _)| *changed);
+            let changed = full.as_ref().map_or(toggled_like, |(changed, _)| *changed);
             if liked && !was_visible && changed {
                 c.likes_count += 1;
             } else if !liked && (changed || was_visible) {
@@ -429,6 +457,12 @@ mod tests {
             assert_eq!(c.likes_preview[0].id, first);
             assert!(c.likes_preview.iter().zip(&l.tracks).all(|(a, b)| a.id == b.id));
         }
+        net.dislike_saved(&track(2));
+        net.dislike_saved(&track(2));
+        let (list, collection) = (snapshot("likes"), snapshot("collection"));
+        let (Data::List(list), Data::Collection(c)) = (&*list, &*collection) else { unreachable!() };
+        assert!(!list.tracks.iter().chain(&c.likes_preview).any(|t| t.id == "2"));
+        assert_eq!(c.likes_count, 11);
         let Data::List(original) = &*open else { unreachable!() };
         assert_eq!(original.tracks[0].id, "1");
 
@@ -437,7 +471,7 @@ mod tests {
         net.like_saved(&track(77), true);
         let preview = snapshot("collection");
         let Data::Collection(c) = &*preview else { unreachable!() };
-        assert_eq!((c.likes_count, c.likes_preview[0].id.as_str()), (13, "77"));
+        assert_eq!((c.likes_count, c.likes_preview[0].id.as_str()), (12, "77"));
         assert!(net.peek("likes").is_none());
         net.store.lock().unwrap().get_mut("collection").unwrap().loading = true;
         net.like_saved(&track(78), true);
