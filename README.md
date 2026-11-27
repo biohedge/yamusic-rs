@@ -64,6 +64,8 @@
   В превью «Мне нравится» текущий трек подсвечен. Кнопка на обложке ставит его на паузу и возобновляет воспроизведение.
 - Страницы исполнителей, альбомов и плейлистов. Свои плейлисты можно переименовывать, менять им
   обложку, сохранять длинные описания и удалять треки. Галочка в меню трека показывает, что он уже в плейлисте.
+- В альбоме подсвечивается текущий трек, а по нажатию на название открывается карточка трека.
+  Альбомы и плейлисты можно поставить следующими или добавить в конец очереди.
 - Пункт «О треке» показывает участников записи. Из альбома можно открыть страницу лейбла.
 - Полноэкранный плеер с текстом песни, который идёт вместе с треком.
 - «Не нравится» доступно для треков и исполнителей. Повторное нажатие снимает дизлайк.
@@ -386,7 +388,7 @@ RS бесплатный и без рекламы. Если он вам приг�
 
 ### Сборка
 
-Нужен Rust 1.92 или новее (`rustup update stable`). Дальше на любой системе одинаково:
+Нужен Rust 1.95 или новее (`rustup update stable`). Дальше на любой системе одинаково:
 
 ```bash
 git clone https://github.com/biohedge/yamusic-rs
@@ -507,11 +509,11 @@ git remote add --no-tags upstream https://github.com/SpolzerMod/yamusic-rs.git
 ```
 
 В чистой ветке `main` загрузите конкретный релиз и слейте его с текущим кодом. Замените
-`v1.1.9` на нужный тег. Так в истории сохраняется связь с апстримом, а локальные теги
+`v1.1.10` на нужный тег. Так в истории сохраняется связь с апстримом, а локальные теги
 остаются тегами релизов форка.
 
 ```bash
-git fetch --no-tags upstream refs/tags/v1.1.9
+git fetch --no-tags upstream refs/tags/v1.1.10
 git merge --no-ff FETCH_HEAD
 ```
 
@@ -576,7 +578,7 @@ This fork ships macOS builds only.
   or stored in the config file on macOS (readable only by your user). It is only sent over HTTPS to
   `yandex.ru` / `yandex.net`. Besides Yandex, the app only talks to `api.github.com` (update checks)
   and the local Discord client (optional status). There is no telemetry.
-- **Build:** Rust 1.92+ and Xcode Command Line Tools, then `tools/make_app.sh` and `tools/make_dmg.sh`;
+- **Build:** Rust 1.95+ and Xcode Command Line Tools, then `tools/make_app.sh` and `tools/make_dmg.sh`;
   `cargo build --release` builds the bare binary.
 - **Bugs:** open an [issue](https://github.com/biohedge/yamusic-rs/issues/new/choose) with the app
   version, your macOS version and the last lines of

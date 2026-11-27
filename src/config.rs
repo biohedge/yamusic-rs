@@ -33,6 +33,8 @@ pub struct Config {
     pub gpu: bool,
     pub discord_enabled: bool,
     pub discord_app_id: String,
+    /// Версия RS, в которой спрятали карточку доната: в следующей она снова видна.
+    pub donate_hidden: String,
     /// system / light / dark
     pub theme: String,
     /// 0 превосходное, 1 оптимальное, 2 экономичное
@@ -95,6 +97,7 @@ impl Default for Config {
             gpu: false,
             discord_enabled: true,
             discord_app_id: String::new(),
+            donate_hidden: String::new(),
             theme: "system".into(),
             quality: 0,
             eq_on: false,
@@ -278,6 +281,10 @@ pub fn log(msg: impl AsRef<str>) {
     let msg = msg.as_ref();
     #[cfg(debug_assertions)]
     eprintln!("{msg}");
+    // Тесты нарочно вызывают ошибки («Лайк не сохранился: offline»): настоящему журналу они не нужны.
+    if cfg!(test) {
+        return;
+    }
     let _ = std::fs::create_dir_all(dir());
     let path = dir().join("log.txt");
     if std::fs::metadata(&path).map(|m| m.len() > 512 * 1024).unwrap_or(false) {

@@ -12,7 +12,7 @@
 
 - `fork` — `biohedge/yamusic-rs`, репозиторий релизов для macOS. База порта — `rnikitin/yamusic-rs`.
 - Для синхронизации с `SpolzerMod/yamusic-rs` используйте remote `upstream` и шаги из `README.md`.
-- Rust 2021, `rust-version = 1.92` в `Cargo.toml`. Не использовать возможности новее.
+- Rust 2021. Использовать возможности до версии `rust-version` из `Cargo.toml` включительно.
 
 ## Обязательный рабочий процесс
 
@@ -53,8 +53,8 @@
 
 ## Сборка и проверка
 
-Требования: Rust 1.92+ и Xcode Command Line Tools. Целевая платформа форка — macOS
-на Apple Silicon. Сборки для Windows, Linux и Android выпускает апстрим.
+Требования: Rust версии `rust-version` из `Cargo.toml` или новее и Xcode Command Line Tools.
+Целевая платформа форка — macOS на Apple Silicon. Сборки для Windows, Linux и Android выпускает апстрим.
 
 ```bash
 cargo build --release          # первый раз 5–10 минут: Skia + LTO

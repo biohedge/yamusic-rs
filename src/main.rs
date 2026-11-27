@@ -39,15 +39,23 @@ mod tags;
 #[cfg(windows)]
 mod tray;
 mod update;
+mod vibe;
 mod yandex_id;
 mod ynison;
 
-fn main() -> Result<(), slint::PlatformError> {
-    // В release stderr теряется: панику пишем в лог (сообщение + место),
-    // чтобы краши можно было разбирать по log.txt без crash report'ов.
-    std::panic::set_hook(Box::new(|info| {
-        config::log(format!("PANIC: {info}"));
+/// С `panic = "abort"` и без консоли паника закрывает приложение без следа. Пишем в log.txt
+/// поток, сообщение и место: стек в сборке со `strip` — одни адреса.
+fn log_panics() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        config::log(format!("паника в потоке «{}»: {}", thread.name().unwrap_or("без имени"), info.to_string().replace('\n', " ")));
+        default(info);
     }));
+}
+
+fn main() -> Result<(), slint::PlatformError> {
+    log_panics();
     #[cfg(windows)]
     smtc::register_app_id();
     #[cfg(target_os = "linux")]

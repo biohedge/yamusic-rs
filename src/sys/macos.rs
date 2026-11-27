@@ -3,6 +3,7 @@
 //! Второй экземпляр .app не стартует — его показывает Launch Services.
 
 use slint::winit_030::WinitWindowAccessor;
+use std::ffi::{c_char, c_void, CStr};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -31,6 +32,11 @@ pub fn minimize(w: &slint::Window) {
 
 pub fn scale(w: &slint::Window) -> f32 {
     w.with_winit_window(|w| w.scale_factor() as f32).unwrap_or(1.0)
+}
+
+/// Для колёсика остаётся шаг Slint, прокрутка тачпада уже приходит в пикселях.
+pub fn wheel_px(_horizontal: bool) -> Option<f32> {
+    None
 }
 
 /// Рабочая область основного экрана в физических пикселях (лево, верх, право, низ).
@@ -90,6 +96,36 @@ pub fn release_memory() {
 /// а на светлой ругается, что ключа нет.
 pub fn system_light_theme() -> bool {
     Command::new("defaults").args(["read", "-g", "AppleInterfaceStyle"]).output().is_ok_and(|o| !o.status.success())
+}
+
+/// Языки из системных настроек, в порядке предпочтения пользователя.
+pub fn preferred_languages() -> Vec<String> {
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFLocaleCopyPreferredLanguages() -> *const c_void;
+        fn CFArrayGetCount(array: *const c_void) -> isize;
+        fn CFArrayGetValueAtIndex(array: *const c_void, index: isize) -> *const c_void;
+        fn CFStringGetLength(string: *const c_void) -> isize;
+        fn CFStringGetCString(string: *const c_void, buf: *mut c_char, size: isize, encoding: u32) -> u8;
+        fn CFRelease(value: *const c_void);
+    }
+    const ASCII: u32 = 0x0600;
+    // SAFETY: API возвращает владение массивом строк. Копируем языковые теги ASCII до CFRelease.
+    unsafe {
+        let array = CFLocaleCopyPreferredLanguages();
+        if array.is_null() {
+            return Vec::new();
+        }
+        let languages = (0..CFArrayGetCount(array)).filter_map(|i| {
+            let string = CFArrayGetValueAtIndex(array, i);
+            let size = CFStringGetLength(string) + 1;
+            let mut buf = vec![0; size as usize];
+            (CFStringGetCString(string, buf.as_mut_ptr(), size, ASCII) != 0)
+                .then(|| CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
+        }).collect();
+        CFRelease(array);
+        languages
+    }
 }
 
 fn home() -> PathBuf {
